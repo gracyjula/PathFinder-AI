@@ -1,51 +1,250 @@
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts'
-import { Brain, Target, TrendingUp, Calendar, Loader2, RefreshCw } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, Cell,
+} from 'recharts'
+import { Brain, Target, TrendingUp, Calendar, Loader2, RefreshCw, Lightbulb, ChevronRight, Info } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import type { SkillGapReport, SkillGapItem, SkillExplanation } from '@/types'
+
+const STATUS_COLOR: Record<string, string> = {
+  strong: 'bg-green-500',
+  developing: 'bg-yellow-500',
+  gap: 'bg-red-500',
+}
+const STATUS_LABEL: Record<string, string> = {
+  strong: 'Strong',
+  developing: 'Developing',
+  gap: 'Gap',
+}
 
 export default function AnalyticsPage() {
   const { profile } = useAuthStore()
-  const [gapSkills, setGapSkills] = useState(profile?.current_skills?.join(', ') || '')
+  const qc = useQueryClient()
   const [gapRole, setGapRole] = useState(profile?.career_goal || '')
+  const [explainSkill, setExplainSkill] = useState<string | null>(null)
 
+  // ── Deterministic skill gap from mastery data ──────────────────────────────
+  const { data: gapData, isLoading: gapLoading, refetch: refetchGap } = useQuery<SkillGapReport>({
+    queryKey: ['skill-gap-current'],
+    queryFn: () => api.get('/analytics/skill-gap').then(r => r.data),
+    enabled: !!profile?.career_goal,
+    retry: false,
+  })
+
+  // Manual gap analysis (POST with different role)
+  const gapMutation = useMutation({
+    mutationFn: () => api.post('/analytics/skill-gap', {
+      current_skills: profile?.current_skills ?? [],
+      target_role: gapRole,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['skill-gap-current'] })
+      toast.success('Skill gap analysis updated!')
+    },
+    onError: () => toast.error('Analysis failed'),
+  })
+
+  // Career readiness
   const { data: readiness, isLoading: rLoading, refetch: refetchReadiness } = useQuery({
     queryKey: ['career-readiness'],
     queryFn: () => api.get('/analytics/career-readiness').then(r => r.data),
     retry: false,
   })
 
+  // Weekly plan
   const { data: weeklyPlan, isLoading: wpLoading } = useQuery({
     queryKey: ['weekly-plan'],
     queryFn: () => api.get('/analytics/weekly-plan').then(r => r.data),
     retry: false,
   })
 
-  const gapMutation = useMutation({
-    mutationFn: () => api.post('/analytics/skill-gap', {
-      current_skills: gapSkills.split(',').map(s => s.trim()).filter(Boolean),
-      target_role: gapRole,
-    }),
-    onSuccess: () => toast.success('Skill gap analysis complete!'),
-    onError: () => toast.error('Analysis failed'),
+  // Skill explanation (on-demand)
+  const { data: explanation, isLoading: explainLoading } = useQuery<SkillExplanation>({
+    queryKey: ['skill-explain', explainSkill],
+    queryFn: () => api.get(`/analytics/explain/${encodeURIComponent(explainSkill!)}`).then(r => r.data),
+    enabled: !!explainSkill,
   })
 
-  const gapData = gapMutation.data?.data
-  const radarData = gapData?.skill_scores
-    ? Object.entries(gapData.skill_scores).map(([name, value]) => ({ name, value }))
-    : []
+  const activeGap: SkillGapReport | undefined = gapMutation.data?.data ?? gapData
+
+  // Radar: all required skills with current mastery
+  const radarData = activeGap?.required_skills
+    ?.slice(0, 8)
+    .map((item: SkillGapItem) => ({
+      name: item.skill.length > 12 ? item.skill.slice(0, 11) + '…' : item.skill,
+      value: Math.round(item.current_mastery),
+    })) ?? []
 
   const breakdownData = readiness?.breakdown
-    ? Object.entries(readiness.breakdown).map(([name, value]) => ({ name: name.charAt(0).toUpperCase() + name.slice(1), value: value as number }))
+    ? Object.entries(readiness.breakdown).map(([name, value]) => ({
+        name: name.charAt(0).toUpperCase() + name.slice(1),
+        value: value as number,
+      }))
     : []
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold text-white">Analytics & Insights</h1>
 
-      {/* Career Readiness */}
+      {/* ── Skill Gap (deterministic) ──────────────────────────────────────── */}
+      <div className="glass-card p-6">
+        <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+          <h2 className="font-semibold text-white flex items-center gap-2">
+            <Target className="w-4 h-4 text-accent-400" /> Skill Gap Analysis
+            <span className="text-xs text-gray-500 font-normal">(deterministic, real-time)</span>
+          </h2>
+          <div className="flex gap-2">
+            <input
+              value={gapRole}
+              onChange={e => setGapRole(e.target.value)}
+              placeholder="Target role…"
+              className="input-field py-1.5 text-sm w-44"
+            />
+            <button
+              onClick={() => gapMutation.mutate()}
+              disabled={gapMutation.isPending || !gapRole}
+              className="btn-secondary py-1.5 flex items-center gap-1.5 text-sm"
+            >
+              {gapMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              Analyze
+            </button>
+          </div>
+        </div>
+
+        {gapLoading ? (
+          <div className="flex items-center justify-center h-32"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+        ) : activeGap ? (
+          <div className="space-y-6">
+            {/* Summary row */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-white/5 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-primary-400">{Math.round(activeGap.career_readiness_pct)}%</div>
+                <div className="text-xs text-gray-400 mt-1">Career Readiness</div>
+              </div>
+              <div className="bg-white/5 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-green-400">{activeGap.strong_skills.length}</div>
+                <div className="text-xs text-gray-400 mt-1">Strong Skills</div>
+              </div>
+              <div className="bg-white/5 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-red-400">{activeGap.gap_skills.length}</div>
+                <div className="text-xs text-gray-400 mt-1">Skill Gaps</div>
+              </div>
+            </div>
+
+            {/* Skill bars + radar */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Skill mastery bars */}
+              <div className="space-y-2.5">
+                <p className="text-xs text-gray-400 uppercase tracking-wide mb-3">Per-Skill Mastery</p>
+                {activeGap.required_skills?.map((item: SkillGapItem) => (
+                  <div key={item.skill}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-300">{item.skill}</span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                          item.status === 'strong' ? 'bg-green-500/20 text-green-300' :
+                          item.status === 'developing' ? 'bg-yellow-500/20 text-yellow-300' :
+                          'bg-red-500/20 text-red-300'
+                        }`}>
+                          {STATUS_LABEL[item.status]}
+                        </span>
+                        <button
+                          onClick={() => setExplainSkill(explainSkill === item.skill ? null : item.skill)}
+                          className="text-gray-600 hover:text-primary-400 transition-colors"
+                          title="Why this skill?"
+                        >
+                          <Info className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <span className="text-xs text-gray-500">{Math.round(item.current_mastery)}%</span>
+                    </div>
+                    <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                      <motion.div
+                        className={`h-full rounded-full ${STATUS_COLOR[item.status]}`}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${item.current_mastery}%` }}
+                        transition={{ duration: 0.6 }}
+                      />
+                    </div>
+                    {/* Inline explanation */}
+                    <AnimatePresence>
+                      {explainSkill === item.skill && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="mt-2 p-3 bg-primary-500/10 rounded-lg border border-primary-500/20">
+                            {explainLoading ? (
+                              <div className="flex items-center gap-2 text-xs text-gray-400">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating explanation…
+                              </div>
+                            ) : explanation?.explanation ? (
+                              <p className="text-xs text-gray-300 leading-relaxed">
+                                <Lightbulb className="w-3.5 h-3.5 text-yellow-400 inline mr-1.5 -mt-0.5" />
+                                {explanation.explanation}
+                              </p>
+                            ) : null}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ))}
+              </div>
+
+              {/* Radar chart */}
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wide mb-3">Skill Coverage</p>
+                {radarData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <RadarChart data={radarData}>
+                      <PolarGrid stroke="rgba(255,255,255,0.08)" />
+                      <PolarAngleAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+                      <Radar name="Mastery" dataKey="value" stroke="#cc33f0" fill="#cc33f0" fillOpacity={0.2} />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex items-center justify-center h-44 text-gray-500 text-sm">
+                    No data yet
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Priority skills */}
+            {activeGap.priority_skills.length > 0 && (
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-wide mb-2">Priority Learning Order</p>
+                <div className="flex flex-wrap gap-2">
+                  {activeGap.priority_skills.map((s, i) => (
+                    <div key={s} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/10">
+                      <span className="text-xs font-bold text-primary-400">#{i + 1}</span>
+                      <span className="text-sm text-gray-300">{s}</span>
+                      <button
+                        onClick={() => setExplainSkill(s)}
+                        className="text-gray-600 hover:text-primary-400 transition-colors"
+                      >
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-gray-400 text-sm">Complete your profile with a career goal to see your skill gap.</p>
+        )}
+      </div>
+
+      {/* ── Career Readiness ──────────────────────────────────────────────── */}
       <div className="glass-card p-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-semibold text-white flex items-center gap-2">
@@ -61,7 +260,6 @@ export default function AnalyticsPage() {
         ) : readiness ? (
           <div className="grid md:grid-cols-2 gap-6">
             <div>
-              {/* Score circle */}
               <div className="flex items-center gap-6 mb-4">
                 <div className="relative">
                   <svg viewBox="0 0 100 100" className="w-24 h-24">
@@ -84,13 +282,11 @@ export default function AnalyticsPage() {
                   <p className={`font-semibold ${readiness.interview_ready ? 'text-green-400' : 'text-yellow-400'}`}>
                     {readiness.interview_ready ? '✅ Interview Ready!' : '📚 Keep Learning'}
                   </p>
-                  {!readiness.interview_ready && (
+                  {!readiness.interview_ready && readiness.estimated_months_to_ready && (
                     <p className="text-sm text-gray-400 mt-1">{readiness.estimated_months_to_ready} months to ready</p>
                   )}
                 </div>
               </div>
-
-              {/* Weak/Strong areas */}
               <div className="space-y-3">
                 {readiness.strong_areas?.length > 0 && (
                   <div>
@@ -114,8 +310,6 @@ export default function AnalyticsPage() {
                 )}
               </div>
             </div>
-
-            {/* Breakdown bar chart */}
             <div>
               <p className="text-xs text-gray-400 uppercase tracking-wide mb-3">Score Breakdown</p>
               <ResponsiveContainer width="100%" height={180}>
@@ -150,59 +344,7 @@ export default function AnalyticsPage() {
         )}
       </div>
 
-      {/* Skill Gap Analyzer */}
-      <div className="glass-card p-6">
-        <h2 className="font-semibold text-white mb-4 flex items-center gap-2">
-          <Target className="w-4 h-4 text-accent-400" /> Skill Gap Analyzer
-        </h2>
-        <div className="flex flex-col sm:flex-row gap-3 mb-4">
-          <input value={gapRole} onChange={e => setGapRole(e.target.value)}
-            placeholder="Target Role (e.g. AI Engineer)" className="input-field flex-1" />
-          <button onClick={() => gapMutation.mutate()} disabled={gapMutation.isPending || !gapRole}
-            className="btn-primary flex items-center gap-2 justify-center sm:w-auto">
-            {gapMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
-            Analyze Gap
-          </button>
-        </div>
-
-        {gapData && (
-          <div className="grid md:grid-cols-2 gap-6 mt-4">
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-medium text-white">Gap: <span className="text-red-400">{gapData.gap_percentage?.toFixed(0)}%</span></p>
-                <p className="text-xs text-gray-400">{gapData.estimated_months_to_close_gap} months to close</p>
-              </div>
-              <div className="space-y-2">
-                <div>
-                  <p className="text-xs text-green-400 mb-1.5">✅ You have</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {gapData.current_skills?.map((s: string) => (
-                      <span key={s} className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-300">{s}</span>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-xs text-red-400 mb-1.5">❌ Missing</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {gapData.missing_skills?.map((s: string) => (
-                      <span key={s} className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-300">{s}</span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <ResponsiveContainer width="100%" height={200}>
-              <RadarChart data={radarData}>
-                <PolarGrid stroke="rgba(255,255,255,0.1)" />
-                <PolarAngleAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-                <Radar name="Skill Level" dataKey="value" stroke="#cc33f0" fill="#cc33f0" fillOpacity={0.2} />
-              </RadarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-
-      {/* Weekly Plan */}
+      {/* ── Weekly Plan ───────────────────────────────────────────────────── */}
       <div className="glass-card p-6">
         <h2 className="font-semibold text-white mb-4 flex items-center gap-2">
           <Calendar className="w-4 h-4 text-blue-400" /> Weekly Learning Plan

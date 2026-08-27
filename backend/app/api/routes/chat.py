@@ -1,4 +1,5 @@
 """Chat routes - Conversational AI with session management."""
+import json
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -101,9 +102,11 @@ async def send_message(
     profile = profile_result.scalar_one_or_none()
     profile_dict = None
     if profile:
+        raw_skills = profile.current_skills
+        parsed_skills = json.loads(raw_skills) if isinstance(raw_skills, str) else (raw_skills or [])
         profile_dict = {
             "career_goal": profile.career_goal,
-            "current_skills": profile.current_skills,
+            "current_skills": parsed_skills,
             "experience_level": profile.experience_level,
             "weekly_hours": profile.weekly_hours,
             "learning_style": profile.learning_style,
@@ -131,7 +134,7 @@ async def send_message(
         # Generate roadmap from conversation
         merged_profile = {
             "career_goal": intent_data.get("extracted_goal") or (profile.career_goal if profile else ""),
-            "current_skills": intent_data.get("current_skills") or (profile.current_skills if profile else []),
+            "current_skills": intent_data.get("current_skills") or (json.loads(profile.current_skills) if profile and isinstance(profile.current_skills, str) else (profile.current_skills if profile else [])),
             "experience_level": intent_data.get("experience_level", "beginner"),
             "target_timeline_months": intent_data.get("timeline_months", 12),
             "weekly_hours": profile.weekly_hours if profile else 10,
@@ -171,7 +174,7 @@ You can view your complete roadmap in the **Roadmap** section. Let me know if yo
         session_id=session.id,
         role="assistant",
         content=ai_response_text,
-        metadata={"roadmap_generated": bool(generated_roadmap), "intent": intent_data.get("intent")},
+        metadata_json=json.dumps({"roadmap_generated": bool(generated_roadmap), "intent": intent_data.get("intent")}),
     )
     db.add(ai_msg)
     await db.commit()

@@ -1,5 +1,7 @@
 """Analytics, Quiz, Resume, and Career Readiness routes."""
+import json
 import uuid
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func as sqlfunc
@@ -12,8 +14,17 @@ from app.schemas.schemas import (
 )
 from app.core.deps import get_current_user
 from app.ai.ai_service import (
-    analyze_skill_gap, calculate_career_readiness, generate_quiz,
-    generate_weekly_plan, analyze_resume, generate_mock_interview_questions
+    analyze_skill_gap as ai_analyze_skill_gap,
+    calculate_career_readiness, generate_quiz,
+    generate_weekly_plan, analyze_resume, generate_mock_interview_questions,
+    generate_skill_gap_explanation, generate_whatif_explanation,
+)
+from app.services.mastery_service import (
+    get_skill_gap_for_user, get_mastery_map, apply_quiz_result,
+    get_next_best_action, record_adaptation,
+)
+from app.services.skill_graph import (
+    build_mastery_map_from_skills, calculate_skill_gap, list_known_roles,
 )
 
 router = APIRouter(prefix="/analytics", tags=["Analytics & AI Tools"])
@@ -27,7 +38,54 @@ async def skill_gap_analysis(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await analyze_skill_gap(payload.current_skills, payload.target_role)
+    """
+    Deterministic skill-gap analysis using the RoleSkillGraph.
+    AI is used only to generate human-readable explanation text —
+    all scores are calculated deterministically.
+    """
+    # Build mastery map: DB mastery rows take precedence;
+    # fill unknowns from the payload's current_skills list.
+    mastery_map = await get_mastery_map(db, current_user.id)
+    # Merge payload skills (self-reported) for skills not yet in DB
+    from app.services.skill_graph import build_mastery_map_from_skills, normalize_skill
+    payload_mastery = build_mastery_map_from_skills(payload.current_skills, "intermediate")
+    for skill, score in payload_mastery.items():
+        if skill not in mastery_map:
+            mastery_map[skill] = score
+
+    gap_result = calculate_skill_gap(payload.target_role, mastery_map)
+
+    # Build structured response
+    result = {
+        "target_role": gap_result.target_role,
+        "required_skills": [
+            {
+                "skill": item.skill,
+                "current_mastery": item.current_mastery,
+                "gap_score": item.gap_score,
+                "status": item.status,
+                "importance": item.required_importance,
+                "prerequisites": item.prerequisites,
+                "prerequisites_met": item.prerequisites_met,
+            }
+            for item in gap_result.required_skills
+        ],
+        "overall_gap_pct": gap_result.overall_gap_pct,
+        "career_readiness_pct": gap_result.career_readiness_pct,
+        "priority_skills": gap_result.priority_skills,
+        "strong_skills": gap_result.strong_skills,
+        "developing_skills": gap_result.developing_skills,
+        "gap_skills": gap_result.gap_skills,
+        # Legacy fields kept for frontend compatibility
+        "current_skills": payload.current_skills,
+        "missing_skills": gap_result.gap_skills,
+        "gap_percentage": gap_result.overall_gap_pct,
+        "skill_scores": {item.skill: item.current_mastery for item in gap_result.required_skills},
+        "recommendations": [
+            f"Focus on {s} — it is your highest-priority gap for {gap_result.target_role}"
+            for s in gap_result.priority_skills[:3]
+        ],
+    }
 
     # Persist to profile
     profile_result = await db.execute(
@@ -35,10 +93,140 @@ async def skill_gap_analysis(
     )
     profile = profile_result.scalar_one_or_none()
     if profile:
-        profile.skill_gap_report = result
+        profile.skill_gap_report = json.dumps(result)
         await db.commit()
 
     return result
+
+
+@router.get("/skill-gap", response_model=dict)
+async def get_skill_gap(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get the current skill gap for the user's target role from their profile."""
+    profile_result = await db.execute(
+        select(LearnerProfile).where(LearnerProfile.user_id == current_user.id)
+    )
+    profile = profile_result.scalar_one_or_none()
+    if not profile or not profile.career_goal:
+        raise HTTPException(status_code=404, detail="Complete your profile with a career goal first")
+
+    gap_result = await get_skill_gap_for_user(
+        db, current_user.id, profile.career_goal, profile.experience_level or "beginner"
+    )
+
+    result = {
+        "target_role": gap_result.target_role,
+        "required_skills": [
+            {
+                "skill": item.skill,
+                "current_mastery": item.current_mastery,
+                "gap_score": item.gap_score,
+                "status": item.status,
+                "importance": item.required_importance,
+                "prerequisites": item.prerequisites,
+                "prerequisites_met": item.prerequisites_met,
+            }
+            for item in gap_result.required_skills
+        ],
+        "overall_gap_pct": gap_result.overall_gap_pct,
+        "career_readiness_pct": gap_result.career_readiness_pct,
+        "priority_skills": gap_result.priority_skills,
+        "strong_skills": gap_result.strong_skills,
+        "developing_skills": gap_result.developing_skills,
+        "gap_skills": gap_result.gap_skills,
+        "skill_scores": {item.skill: item.current_mastery for item in gap_result.required_skills},
+        "gap_percentage": gap_result.overall_gap_pct,
+        "missing_skills": gap_result.gap_skills,
+        "recommendations": [
+            f"Focus on {s} — it is your highest-priority gap for {gap_result.target_role}"
+            for s in gap_result.priority_skills[:3]
+        ],
+    }
+    return result
+
+
+@router.get("/roles", response_model=list[str])
+async def list_roles(_: User = Depends(get_current_user)):
+    """List all supported target roles."""
+    return list_known_roles()
+
+
+@router.get("/next-best-action", response_model=list[dict])
+async def next_best_action(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the top 3 learning actions based on current skill mastery gaps."""
+    profile_result = await db.execute(
+        select(LearnerProfile).where(LearnerProfile.user_id == current_user.id)
+    )
+    profile = profile_result.scalar_one_or_none()
+    if not profile or not profile.career_goal:
+        return []
+    return await get_next_best_action(
+        db, current_user.id, profile.career_goal, profile.weekly_hours or 10
+    )
+
+
+@router.get("/mastery", response_model=dict)
+async def get_mastery(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the current skill mastery map for the user."""
+    mastery_map = await get_mastery_map(db, current_user.id)
+    return {"mastery": mastery_map}
+
+
+@router.get("/explain/{skill}", response_model=dict)
+async def explain_recommendation(
+    skill: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return a grounded, personalized explanation for why a skill is recommended.
+    The explanation references actual mastery scores — not a generic statement.
+    """
+    from app.ai.ai_service import generate_skill_gap_explanation
+    from app.services.skill_graph import normalize_skill
+
+    profile_result = await db.execute(
+        select(LearnerProfile).where(LearnerProfile.user_id == current_user.id)
+    )
+    profile = profile_result.scalar_one_or_none()
+    target_role = profile.career_goal if profile else "your target role"
+
+    mastery_map = await get_mastery_map(db, current_user.id)
+    canonical = normalize_skill(skill)
+    current_mastery = mastery_map.get(canonical, 0.0)
+
+    gap_result = await get_skill_gap_for_user(
+        db, current_user.id, target_role, profile.experience_level if profile else "beginner"
+    )
+
+    item = next((i for i in gap_result.required_skills if i.skill == canonical), None)
+    prerequisites = item.prerequisites if item else []
+
+    explanation = await generate_skill_gap_explanation(
+        skill=canonical,
+        current_mastery=current_mastery,
+        target_role=target_role,
+        prerequisites=prerequisites,
+        strong_skills=gap_result.strong_skills,
+    )
+
+    return {
+        "skill": canonical,
+        "current_mastery": round(current_mastery, 1),
+        "target_role": target_role,
+        "prerequisites": prerequisites,
+        "explanation": explanation,
+        "status": item.status if item else "unknown",
+        "importance": item.required_importance if item else 0.5,
+    }
 
 
 # ─── Career Readiness ─────────────────────────────────────────────────────────
@@ -86,8 +274,8 @@ async def get_career_readiness(
 
     profile_dict = {
         "career_goal": profile.career_goal,
-        "current_skills": profile.current_skills,
-        "completed_courses": profile.completed_courses,
+        "current_skills": json.loads(profile.current_skills) if isinstance(profile.current_skills, str) else (profile.current_skills or []),
+        "completed_courses": json.loads(profile.completed_courses) if isinstance(profile.completed_courses, str) else (profile.completed_courses or []),
         "experience_level": profile.experience_level,
     }
 
@@ -143,7 +331,7 @@ async def get_dashboard_stats(
         "profile": {
             "career_goal": profile.career_goal if profile else None,
             "career_readiness_score": profile.career_readiness_score if profile else 0,
-            "current_skills": profile.current_skills if profile else [],
+            "current_skills": (json.loads(profile.current_skills) if isinstance(profile.current_skills, str) else (profile.current_skills or [])) if profile else [],
             "experience_level": profile.experience_level if profile else "beginner",
         },
         "roadmaps": [
@@ -183,7 +371,7 @@ async def submit_quiz(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Evaluate quiz answers and save result."""
+    """Evaluate quiz answers, save result, and update skill mastery deterministically."""
     questions = payload.questions.get("questions", [])
     answers = payload.answers
     correct = 0
@@ -199,23 +387,64 @@ async def submit_quiz(
             feedback_items.append(f"Q: {q.get('question')} — Correct: {correct_ans}. {q.get('explanation', '')}")
 
     score = (correct / len(questions)) * 100 if questions else 0
+    score_rounded = round(score, 1)
 
     quiz_result = QuizResult(
         user_id=current_user.id,
         topic=payload.topic,
-        score=round(score, 1),
-        questions=payload.questions,
+        score=score_rounded,
+        questions_json=json.dumps(payload.questions),
         feedback="\n".join(feedback_items) if feedback_items else "All correct!",
     )
     db.add(quiz_result)
+    await db.flush()
+
+    # ── Deterministic mastery update ──────────────────────────────────────────
+    old_mastery, new_mastery = await apply_quiz_result(
+        db, current_user.id, payload.topic, score_rounded
+    )
+
+    # Record adaptation event if mastery changed significantly (>5 points)
+    mastery_delta = new_mastery - old_mastery
+    if abs(mastery_delta) > 5:
+        # Find the user's active roadmap
+        roadmap_result = await db.execute(
+            select(Roadmap)
+            .where(Roadmap.user_id == current_user.id, Roadmap.status == "active")
+            .order_by(Roadmap.created_at.desc())
+            .limit(1)
+        )
+        roadmap = roadmap_result.scalar_one_or_none()
+        if roadmap:
+            direction = "increased" if mastery_delta > 0 else "decreased"
+            await record_adaptation(
+                db=db,
+                user_id=current_user.id,
+                roadmap_id=roadmap.id,
+                trigger="quiz_result",
+                skill=payload.topic,
+                old_mastery=old_mastery,
+                new_mastery=new_mastery,
+                action_taken=(
+                    f"Quiz score {score_rounded:.0f}% on {payload.topic}: "
+                    f"mastery {direction} from {old_mastery:.0f}% to {new_mastery:.0f}%"
+                ),
+            )
+
     await db.commit()
 
     return {
-        "score": round(score, 1),
+        "score": score_rounded,
         "correct": correct,
         "total": len(questions),
         "feedback": feedback_items,
         "passed": score >= 60,
+        "mastery_update": {
+            "skill": payload.topic,
+            "old_mastery": round(old_mastery, 1),
+            "new_mastery": round(new_mastery, 1),
+            "delta": round(mastery_delta, 1),
+        },
     }
 
 
@@ -254,7 +483,7 @@ async def get_weekly_plan(
         "career_goal": profile.career_goal,
         "weekly_hours": profile.weekly_hours,
         "learning_style": profile.learning_style,
-        "current_skills": profile.current_skills,
+        "current_skills": json.loads(profile.current_skills) if isinstance(profile.current_skills, str) else (profile.current_skills or []),
     }
 
     return await generate_weekly_plan(profile_dict, milestone_dict)
@@ -301,9 +530,10 @@ async def analyze_resume_endpoint(
     )
     profile = profile_result.scalar_one_or_none()
     if profile:
-        existing = set(profile.current_skills)
+        existing_raw = profile.current_skills
+        existing = set(json.loads(existing_raw) if isinstance(existing_raw, str) else (existing_raw or []))
         new_skills = list(existing | set(result.get("extracted_skills", [])))
-        profile.current_skills = new_skills
+        profile.current_skills = json.dumps(new_skills)
         profile.resume_text = text[:5000]
         await db.commit()
 
@@ -323,7 +553,7 @@ async def mock_interview(
         select(LearnerProfile).where(LearnerProfile.user_id == current_user.id)
     )
     profile = profile_result.scalar_one_or_none()
-    skills = profile.current_skills if profile else []
+    skills = json.loads(profile.current_skills) if profile and isinstance(profile.current_skills, str) else (profile.current_skills if profile else [])
     return await generate_mock_interview_questions(role, skills, difficulty)
 
 
@@ -365,9 +595,122 @@ async def log_progress(
     return log
 
 
+@router.post("/whatif", response_model=dict)
+async def whatif_simulation(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    weekly_hours: Optional[int] = None,
+    target_role: Optional[str] = None,
+    timeline_months: Optional[int] = None,
+    known_skills: Optional[str] = None,   # comma-separated
+):
+    """
+    What-if simulator: show how the roadmap would change under different parameters.
+    Pure computation — does NOT change any persisted data until the user confirms.
+    """
+    from app.services.skill_graph import build_mastery_map_from_skills
+
+    profile_result = await db.execute(        select(LearnerProfile).where(LearnerProfile.user_id == current_user.id)
+    )
+    profile = profile_result.scalar_one_or_none()
+
+    # Current params
+    current_role = profile.career_goal if profile else "AI Engineer"
+    current_hours = profile.weekly_hours if profile else 10
+    current_timeline = (profile.target_timeline_months if profile else 12) or 12
+    current_mastery = await get_mastery_map(db, current_user.id)
+
+    # Simulated params
+    sim_role = target_role or current_role
+    sim_hours = weekly_hours or current_hours
+    sim_timeline = timeline_months or current_timeline
+
+    # Merge in any extra known skills for the simulation
+    sim_mastery = dict(current_mastery)
+    if known_skills:
+        extra = build_mastery_map_from_skills(
+            [s.strip() for s in known_skills.split(",")], "intermediate"
+        )
+        for skill, score in extra.items():
+            if skill not in sim_mastery or sim_mastery[skill] < score:
+                sim_mastery[skill] = score
+
+    # Compute gaps
+    current_gap = calculate_skill_gap(current_role, current_mastery)
+    sim_gap = calculate_skill_gap(sim_role, sim_mastery)
+
+    def estimate_hours(skill_items: list, hours_per_week: int, timeline: int) -> dict:
+        """Estimate feasibility given gap items, weekly hours, and timeline in months."""
+        total_available = hours_per_week * timeline * 4  # 4 weeks per month
+        gap_items = [i for i in skill_items if i.status != "strong"]
+        # 1 gap point ≈ 0.5 hours of focused study
+        total_gap_hours = sum(i.gap_score * 0.5 for i in gap_items)
+        feasible = total_available >= total_gap_hours
+        months_needed = round(total_gap_hours / (hours_per_week * 4), 1) if hours_per_week > 0 else 999
+        return {
+            "total_available_hours": int(total_available),
+            "estimated_gap_hours": int(total_gap_hours),
+            "feasible_in_timeline": feasible,
+            "estimated_months_needed": months_needed,
+        }
+
+    current_est = estimate_hours(current_gap.required_skills, current_hours, current_timeline)
+    sim_est = estimate_hours(sim_gap.required_skills, sim_hours, sim_timeline)
+
+    # Summarize changes
+    changes = []
+    if sim_role != current_role:
+        changes.append(f"Role changed from '{current_role}' to '{sim_role}'")
+    if sim_hours != current_hours:
+        direction = "more" if sim_hours > current_hours else "fewer"
+        changes.append(f"Study time: {current_hours}h/week → {sim_hours}h/week ({direction} hours)")
+    if sim_timeline != current_timeline:
+        changes.append(f"Timeline: {current_timeline} months → {sim_timeline} months")
+    if known_skills:
+        changes.append(f"Added known skills: {known_skills}")
+    if not changes:
+        changes.append("No parameters changed — showing current state")
+
+    readiness_delta = round(sim_gap.career_readiness_pct - current_gap.career_readiness_pct, 1)
+    months_delta = round(sim_est["estimated_months_needed"] - current_est["estimated_months_needed"], 1)
+
+    explanation = await generate_whatif_explanation(
+        original_params={"role": current_role, "hours": current_hours, "timeline": current_timeline},
+        new_params={"role": sim_role, "hours": sim_hours, "timeline": sim_timeline},
+        changes=changes,
+    )
+
+    return {
+        "simulation_label": "What-If Scenario (not saved — confirm to apply)",
+        "changes": changes,
+        "current": {
+            "role": current_role,
+            "weekly_hours": current_hours,
+            "timeline_months": current_timeline,
+            "career_readiness_pct": current_gap.career_readiness_pct,
+            "gap_skills": current_gap.gap_skills,
+            "priority_skills": current_gap.priority_skills[:5],
+            **current_est,
+        },
+        "simulated": {
+            "role": sim_role,
+            "weekly_hours": sim_hours,
+            "timeline_months": sim_timeline,
+            "career_readiness_pct": sim_gap.career_readiness_pct,
+            "gap_skills": sim_gap.gap_skills,
+            "priority_skills": sim_gap.priority_skills[:5],
+            **sim_est,
+        },
+        "impact": {
+            "readiness_change": readiness_delta,
+            "months_change": months_delta,
+            "explanation": explanation,
+        },
+    }
+
+
 @router.get("/progress", response_model=list[ProgressLogOut])
-async def get_progress_logs(
-    limit: int = 50,
+async def get_progress_logs(    limit: int = 50,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

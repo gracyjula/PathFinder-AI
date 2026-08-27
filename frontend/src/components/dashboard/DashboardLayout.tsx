@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Brain, LayoutDashboard, MessageSquare, Map, BarChart2, User, FileQuestion, Mic, LogOut, Flame, Menu, X } from 'lucide-react'
+import { Brain, LayoutDashboard, MessageSquare, Map, BarChart2, User, FileQuestion, Mic, LogOut, Menu, X, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 
@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: '/dashboard/roadmap', label: 'My Roadmap', icon: Map },
   { to: '/dashboard/analytics', label: 'Analytics', icon: BarChart2 },
   { to: '/dashboard/quiz', label: 'Quiz', icon: FileQuestion },
+  { to: '/dashboard/whatif', label: 'What-If Simulator', icon: Zap },
   { to: '/dashboard/interview', label: 'Mock Interview', icon: Mic },
   { to: '/dashboard/profile', label: 'Profile', icon: User },
 ]

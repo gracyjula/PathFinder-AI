@@ -1,10 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts'
-import { Flame, Target, BookOpen, Trophy, ArrowRight, Zap, Brain, TrendingUp } from 'lucide-react'
+import {
+  RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, Cell,
+} from 'recharts'
+import { Flame, Target, BookOpen, Trophy, ArrowRight, Zap, Brain, TrendingUp, Lightbulb, ChevronRight, AlertTriangle } from 'lucide-react'
+import { motion } from 'framer-motion'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
-import type { DashboardStats } from '@/types'
+import type { DashboardStats, NextBestAction, SkillGapReport } from '@/types'
 
 export default function DashboardPage() {
   const { user, profile } = useAuthStore()
@@ -14,17 +18,42 @@ export default function DashboardPage() {
     queryFn: () => api.get('/analytics/dashboard').then(r => r.data),
   })
 
-  const radarData = profile?.skill_gap_report?.skill_scores
-    ? Object.entries(profile.skill_gap_report.skill_scores).slice(0, 6).map(([name, value]) => ({ name, value }))
-    : [
-        { name: 'Python', value: 75 }, { name: 'ML', value: 60 }, { name: 'Deep Learning', value: 30 },
-        { name: 'NLP', value: 20 }, { name: 'MLOps', value: 15 }, { name: 'LangChain', value: 10 },
-      ]
+  const { data: nbaData } = useQuery<NextBestAction[]>({
+    queryKey: ['next-best-action'],
+    queryFn: () => api.get('/analytics/next-best-action').then(r => r.data),
+    enabled: !!profile?.career_goal,
+  })
 
-  const progressData = [
-    { month: 'Jul', progress: 10 }, { month: 'Aug', progress: 25 }, { month: 'Sep', progress: 40 },
-    { month: 'Oct', progress: 55 }, { month: 'Nov', progress: 65 }, { month: 'Dec', progress: stats?.milestones.percentage || 70 },
-  ]
+  const { data: gapData } = useQuery<SkillGapReport>({
+    queryKey: ['skill-gap-current'],
+    queryFn: () => api.get('/analytics/skill-gap').then(r => r.data),
+    enabled: !!profile?.career_goal,
+    retry: false,
+  })
+
+  const { data: masteryData } = useQuery<{ mastery: Record<string, number> }>({
+    queryKey: ['mastery'],
+    queryFn: () => api.get('/analytics/mastery').then(r => r.data),
+    enabled: !!profile,
+  })
+
+  // Skill radar data — from mastery map if available, else from gap report
+  const radarData: { name: string; value: number }[] = masteryData?.mastery
+    ? Object.entries(masteryData.mastery)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 7)
+        .map(([name, value]) => ({ name, value: Math.round(value) }))
+    : gapData?.skill_scores
+    ? Object.entries(gapData.skill_scores)
+        .slice(0, 7)
+        .map(([name, value]) => ({ name, value: Math.round(value as number) }))
+    : []
+
+  // Milestone progress bar chart — real completed vs total per roadmap
+  const milestoneBarData = stats?.roadmaps?.map(r => ({
+    name: r.title.length > 18 ? r.title.slice(0, 16) + '…' : r.title,
+    progress: r.completion_percentage,
+  })) ?? []
 
   if (isLoading) {
     return (
@@ -34,7 +63,8 @@ export default function DashboardPage() {
     )
   }
 
-  const readiness = stats?.profile.career_readiness_score || 0
+  const readiness = gapData?.career_readiness_pct ?? stats?.profile.career_readiness_score ?? 0
+  const topNba = nbaData?.[0]
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -44,9 +74,58 @@ export default function DashboardPage() {
           Welcome back, <span className="gradient-text">{user?.full_name?.split(' ')[0] || user?.username}</span> 👋
         </h1>
         <p className="text-gray-400 text-sm">
-          {profile?.career_goal ? `You're on track to become a ${profile.career_goal}` : 'Complete your profile to get started'}
+          {profile?.career_goal
+            ? `You're on track to become a ${profile.career_goal}`
+            : 'Complete your profile to get started'}
         </p>
       </div>
+
+      {/* ── NEXT BEST ACTION ─────────────────────────────────────────── */}
+      {topNba && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card p-5 mb-6 border border-primary-500/30 bg-gradient-to-r from-primary-500/10 to-accent-500/10"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3 flex-1">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Lightbulb className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-primary-400 uppercase tracking-wide mb-1">Next Best Action</p>
+                <p className="font-semibold text-white">
+                  {topNba.type === 'prerequisite' ? '🔗 Prerequisite: ' : '🎯 Focus on: '}
+                  <span className="gradient-text">{topNba.skill}</span>
+                  {topNba.estimated_hours > 0 && (
+                    <span className="text-gray-400 font-normal ml-2 text-sm">~{topNba.estimated_hours}h</span>
+                  )}
+                </p>
+                <p className="text-sm text-gray-400 mt-1">{topNba.reason}</p>
+              </div>
+            </div>
+            <div className="flex gap-2 flex-shrink-0">
+              <Link
+                to="/dashboard/quiz"
+                state={{ prefillTopic: topNba.skill }}
+                className="btn-primary text-sm py-2 px-4 flex items-center gap-1.5"
+              >
+                Take Quiz <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+          </div>
+          {/* All actions */}
+          {nbaData && nbaData.length > 1 && (
+            <div className="mt-3 pt-3 border-t border-white/10 flex flex-wrap gap-2">
+              {nbaData.slice(1).map((a, i) => (
+                <span key={i} className="text-xs px-2.5 py-1 rounded-full bg-white/5 text-gray-400">
+                  {a.skill}
+                </span>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* Quick Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -74,7 +153,7 @@ export default function DashboardPage() {
         <StatCard
           icon={<Target className="w-5 h-5 text-purple-400" />}
           label="Career Ready"
-          value={`${readiness}%`}
+          value={`${Math.round(readiness)}%`}
           sub={readiness >= 70 ? 'Interview ready!' : 'Keep going!'}
           color="from-purple-500/20 to-pink-500/20"
         />
@@ -105,48 +184,74 @@ export default function DashboardPage() {
               </defs>
             </svg>
             <div className="absolute bottom-0 text-center">
-              <div className="text-3xl font-bold gradient-text">{readiness}</div>
+              <div className="text-3xl font-bold gradient-text">{Math.round(readiness)}</div>
               <div className="text-xs text-gray-400">/ 100</div>
             </div>
           </div>
-          <Link to="/dashboard/analytics" className="text-primary-400 text-sm flex items-center gap-1 hover:text-primary-300">
-            View breakdown <ArrowRight className="w-3 h-3" />
+          {gapData && (
+            <div className="space-y-1.5 text-xs">
+              {gapData.strong_skills.length > 0 && (
+                <p className="text-green-400">✅ Strong: {gapData.strong_skills.slice(0, 3).join(', ')}</p>
+              )}
+              {gapData.gap_skills.length > 0 && (
+                <p className="text-red-400">⚠️ Gaps: {gapData.gap_skills.slice(0, 3).join(', ')}</p>
+              )}
+            </div>
+          )}
+          <Link to="/dashboard/analytics" className="text-primary-400 text-sm flex items-center gap-1 hover:text-primary-300 mt-3">
+            Full analysis <ArrowRight className="w-3 h-3" />
           </Link>
         </div>
 
-        {/* Skill Radar */}
+        {/* Skill Radar — real mastery data */}
         <div className="glass-card p-6">
           <h2 className="font-semibold text-white mb-4 flex items-center gap-2">
-            <Zap className="w-4 h-4 text-accent-400" /> Skill Radar
+            <Zap className="w-4 h-4 text-accent-400" /> Skill Mastery
           </h2>
-          <ResponsiveContainer width="100%" height={180}>
-            <RadarChart data={radarData}>
-              <PolarGrid stroke="rgba(255,255,255,0.1)" />
-              <PolarAngleAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-              <Radar name="Skills" dataKey="value" stroke="#4c6ef5" fill="#4c6ef5" fillOpacity={0.2} />
-            </RadarChart>
-          </ResponsiveContainer>
+          {radarData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={180}>
+              <RadarChart data={radarData}>
+                <PolarGrid stroke="rgba(255,255,255,0.1)" />
+                <PolarAngleAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+                <Radar name="Mastery" dataKey="value" stroke="#4c6ef5" fill="#4c6ef5" fillOpacity={0.25} />
+              </RadarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-44 text-center">
+              <AlertTriangle className="w-8 h-8 text-gray-600 mb-2" />
+              <p className="text-sm text-gray-500">Complete onboarding to see your skill radar</p>
+            </div>
+          )}
         </div>
 
-        {/* Progress Chart */}
+        {/* Roadmap Progress — real data */}
         <div className="glass-card p-6">
           <h2 className="font-semibold text-white mb-4 flex items-center gap-2">
-            <Brain className="w-4 h-4 text-primary-400" /> Learning Progress
+            <Brain className="w-4 h-4 text-primary-400" /> Roadmap Progress
           </h2>
-          <ResponsiveContainer width="100%" height={180}>
-            <AreaChart data={progressData}>
-              <defs>
-                <linearGradient id="progressGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#4c6ef5" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#4c6ef5" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="month" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis hide />
-              <Tooltip contentStyle={{ background: '#1e1b4b', border: '1px solid #4c6ef5', borderRadius: '8px', color: '#e0e7ff' }} />
-              <Area type="monotone" dataKey="progress" stroke="#4c6ef5" fill="url(#progressGrad)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
+          {milestoneBarData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={milestoneBarData} layout="vertical">
+                <XAxis type="number" domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} axisLine={false} tickLine={false} width={70} />
+                <Tooltip
+                  formatter={(val: number) => [`${val}%`, 'Complete']}
+                  contentStyle={{ background: '#1e1b4b', border: '1px solid #4c6ef5', borderRadius: '8px', color: '#e0e7ff', fontSize: 12 }}
+                />
+                <Bar dataKey="progress" radius={[0, 4, 4, 0]}>
+                  {milestoneBarData.map((_, i) => (
+                    <Cell key={i} fill={`hsl(${220 + i * 30}, 70%, 60%)`} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-44 text-center">
+              <Target className="w-8 h-8 text-gray-600 mb-2" />
+              <p className="text-sm text-gray-500">Generate a roadmap to track progress</p>
+              <Link to="/dashboard/roadmap" className="text-primary-400 text-xs mt-2 hover:underline">Create roadmap →</Link>
+            </div>
+          )}
         </div>
       </div>
 
@@ -165,8 +270,12 @@ export default function DashboardPage() {
                 <span className="text-gray-300 text-sm truncate flex-1">{r.title}</span>
                 <div className="flex items-center gap-3 ml-4">
                   <div className="w-32 bg-white/5 rounded-full h-1.5">
-                    <div className="bg-gradient-to-r from-primary-500 to-accent-500 h-1.5 rounded-full"
-                      style={{ width: `${r.completion_percentage}%` }} />
+                    <motion.div
+                      className="bg-gradient-to-r from-primary-500 to-accent-500 h-1.5 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${r.completion_percentage}%` }}
+                      transition={{ duration: 0.8, ease: 'easeOut' }}
+                    />
                   </div>
                   <span className="text-xs text-gray-400 w-10 text-right">{r.completion_percentage}%</span>
                 </div>
@@ -182,7 +291,7 @@ export default function DashboardPage() {
           { to: '/dashboard/chat', label: 'Chat with AI Mentor', icon: Brain, color: 'from-blue-500 to-cyan-500' },
           { to: '/dashboard/roadmap', label: 'View Roadmap', icon: Target, color: 'from-purple-500 to-pink-500' },
           { to: '/dashboard/quiz', label: 'Take a Quiz', icon: Trophy, color: 'from-yellow-500 to-orange-500' },
-          { to: '/dashboard/interview', label: 'Mock Interview', icon: Zap, color: 'from-green-500 to-emerald-500' },
+          { to: '/dashboard/whatif', label: 'What-If Simulator', icon: Zap, color: 'from-green-500 to-emerald-500' },
         ].map(action => (
           <Link key={action.to} to={action.to}
             className="glass-card-hover p-5 flex flex-col items-start gap-3 group">

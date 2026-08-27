@@ -1,287 +1,266 @@
-# 🧠 NeuraLearn AI
+# NeuraLearn AI
 
-> **AI-Powered Personalized Learning Operating System**
-> Netflix + Duolingo + Coursera + ChatGPT + Career Coach — in one intelligent platform
+> An adaptive AI learning-path engine that understands where a learner is, where they want
+> to go, identifies the gap between the two, determines what should be learned next, explains
+> why, and continuously replans the journey based on evidence of learning.
 
----
-
-## 🎯 What is NeuraLearn AI?
-
-NeuraLearn AI answers the most important question every learner has:
-
-> **"I want to become X. What should I learn next?"**
-
-You tell the AI your goal. It analyzes your skills, identifies gaps, generates a personalized month-by-month roadmap, curates resources, and acts as your AI mentor — all in real time.
+Built for the **PathFinder Round 2 challenge**.
 
 ---
 
-## ✨ Key Features
+## The Problem
 
-| Module | Description |
-|--------|-------------|
-| 🤖 **AI Mentor** | Conversational AI chat using Gemini 1.5 Pro + OpenAI fallback |
-| 🎯 **Skill Gap Analyzer** | Compare current skills vs. target role requirements |
-| 🗺️ **Roadmap Generator** | Month-by-month personalized learning path |
-| 📊 **Career Readiness Score** | 0-100 score with breakdown and suggestions |
-| 📚 **Resource Recommender** | Curated courses, videos, projects, certifications |
-| 🧠 **Adaptive Learning** | Roadmap updates based on progress and quiz scores |
-| 🎓 **Mock Interview** | AI-generated questions with sample answers |
-| 📝 **Quiz Engine** | AI-generated quizzes per topic with evaluation |
-| 📅 **Weekly Planner** | Daily schedule with tasks, revision, and assessments |
-| 📄 **Resume Analyzer** | Upload resume → extract skills → gap analysis |
-| 🔥 **Streak Tracking** | Daily learning streaks and consistency metrics |
-| 📈 **Dashboard** | Skill radar, progress charts, milestone tracker |
+Generic course recommendation engines tell learners *what* to study. They don't know *why*
+a particular learner needs it, *when* they're ready for it, or *whether the plan should change*
+after the learner demonstrates new knowledge.
 
----
+## The Solution
 
-## 🏗️ Architecture
+NeuraLearn AI implements a closed-loop adaptive learning engine:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    NeuraLearn AI                        │
-├──────────────────────┬──────────────────────────────────┤
-│    Frontend          │         Backend                  │
-│    React + Vite      │         FastAPI                  │
-│    TypeScript        │         SQLAlchemy Async         │
-│    TailwindCSS       │         PostgreSQL               │
-│    Zustand           │         ChromaDB                 │
-│    Recharts          │         Redis                    │
-│    Framer Motion     │                                  │
-├──────────────────────┴──────────────────────────────────┤
-│                     AI Layer                            │
-│    Gemini 1.5 Pro → OpenAI GPT-4o → OpenRouter          │
-│    Automatic fallback chain                             │
-└─────────────────────────────────────────────────────────┘
+GOAL → LEARNER PROFILE → REQUIRED SKILLS → CURRENT MASTERY
+→ SKILL GAP → PREREQUISITES → PERSONALIZED ROADMAP
+→ ASSESSMENT → UPDATED MASTERY → ADAPTIVE REPLANNING
 ```
+
+Every step in this loop is implemented and working end-to-end.
 
 ---
 
-## 🚀 Quick Start (Docker)
+## Key Features
+
+| Feature | Implementation |
+|---|---|
+| Conversational goal intake | AI intent extraction via chat → structured profile |
+| Skill gap analysis | Deterministic RoleSkillGraph (8 roles, 70+ skills, prereqs) |
+| Personalized roadmap | AI-generated, prerequisite-aware, per-learner profile |
+| Knowledge quiz | AI-generated questions, deterministic scoring |
+| Mastery tracking | Bayesian credibility blend updated after each quiz |
+| Adaptive roadmap | Per-milestone adaptation status (accelerate/reinforce/normal) |
+| Explainable recommendations | Per-skill "Why this?" grounded in actual mastery % |
+| Next Best Action | Deterministic: highest gap × importance, prerequisite-aware |
+| What-If Simulator | Stateless scenario comparison (role/hours/timeline/skills) |
+| Career Readiness Score | Weighted average across required skills vs mastery |
+| Dashboard | Real-time mastery radar, roadmap progress, NBA card |
+| Mock Interview | AI-generated role-specific questions |
+| Resume analysis | PDF/DOCX/TXT parsing → skill extraction → profile update |
+
+---
+
+## Architecture
+
+```
+frontend/          React 18 + Vite + TypeScript + TailwindCSS
+  src/
+    pages/         DashboardPage, AnalyticsPage, RoadmapPage, QuizPage,
+                   WhatIfPage, ChatPage, ProfilePage, OnboardingPage,
+                   InterviewPage, LandingPage, LoginPage, RegisterPage
+    components/    DashboardLayout
+    store/         authStore (Zustand + persist)
+    lib/           api.ts (axios + interceptors + token refresh)
+    types/         Full TypeScript types for all API contracts
+
+backend/           FastAPI + Python 3.11+
+  app/
+    ai/
+      ai_service.py    All AI functions (Gemini → OpenAI → OpenRouter fallback)
+    api/routes/
+      auth.py          JWT auth (register, login, refresh, me)
+      profile.py       Learner profile CRUD + mastery seeding
+      roadmap.py       Roadmap CRUD + milestone completion + adapt endpoint
+      analytics.py     Skill gap, quiz, career readiness, weekly plan,
+                       resume analysis, mock interview, what-if simulator
+      chat.py          Conversational mentor with session persistence
+      admin.py         Admin stats (protected)
+    services/
+      skill_graph.py   RoleSkillGraph, calculate_skill_gap, mastery formulas
+      mastery_service.py  SkillMastery DB operations, next best action
+      roadmap_service.py  Roadmap creation, progress recalculation
+    models/
+      models.py        User, LearnerProfile, Roadmap, Milestone, ChatSession,
+                       ChatMessage, QuizResult, ProgressLog, LearningStreak,
+                       SkillMastery, AdaptationEvent
+    core/
+      config.py        Pydantic settings (env vars)
+      security.py      JWT creation and validation
+      deps.py          FastAPI dependencies (get_current_user, get_db)
+```
+
+### AI Architecture
+
+```
+User Input (natural language)
+        │
+        ▼
+AI Provider (Gemini 1.5 Pro → OpenAI GPT-4o-mini → OpenRouter)
+  Used for: intent extraction, roadmap narrative, quiz generation,
+            mentor chat, skill explanation, whatif narrative
+        │
+        ▼  narrative only
+Deterministic Engine (no AI)
+  Used for: skill gap scores, mastery percentages, prerequisite validation,
+            quiz scoring, progress tracking, next best action ranking,
+            adaptation status, feasibility calculation
+```
+
+AI is used where *reasoning* is valuable. Math is never delegated to an LLM.
+
+---
+
+## Setup
 
 ### Prerequisites
-- Docker & Docker Compose
+- Python 3.11+
+- Node.js 18+
 - At least one AI API key (Gemini, OpenAI, or OpenRouter)
 
-### 1. Clone and configure
-```bash
-git clone <repo-url>
-cd NeuraLearn
-cp backend/.env.example backend/.env
-# Edit backend/.env and add your API keys
-```
+### Environment Variables
 
-### 2. Add your API keys to `backend/.env`
+Copy `backend/.env.example` to `backend/.env` and fill in:
+
 ```env
+# Database (SQLite for dev, PostgreSQL for prod)
+DATABASE_URL=sqlite+aiosqlite:///./neuralearn.db
+
+# JWT
+SECRET_KEY=your-secret-key-min-32-chars
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# AI Providers (at least one required)
 GEMINI_API_KEY=your-gemini-api-key
-OPENAI_API_KEY=your-openai-api-key      # optional fallback
+OPENAI_API_KEY=your-openai-api-key       # optional fallback
 OPENROUTER_API_KEY=your-openrouter-key  # optional fallback
-SECRET_KEY=your-random-secret-key-32chars-minimum
 ```
 
-### 3. Start everything
+### Local Development
+
+```bash
+# Backend
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+
+# Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend: http://localhost:5173  
+Backend API docs: http://localhost:8000/docs
+
+### Docker
+
 ```bash
 docker-compose up --build
 ```
 
-### 4. Access the app
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost |
-| Backend API | http://localhost:8000 |
-| API Docs | http://localhost:8000/api/docs |
+Frontend: http://localhost:5173  
+Backend: http://localhost:8000
 
 ---
 
-## 💻 Local Development
+## Demo Scenario
 
-### Backend
-```bash
-cd backend
-python -m venv .venv
-.venv\Scripts\activate      # Windows
-# source .venv/bin/activate  # Linux/Mac
+The following scenario exercises the full adaptive learning loop:
 
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env
-
-uvicorn app.main:app --reload --port 8000
-```
-
-### Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-# Opens at http://localhost:5173
-```
-
-### Database (local)
-```bash
-# Start PostgreSQL (or use Docker)
-docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=neuralearn postgres:16-alpine
-```
+1. Register a new account.
+2. In onboarding, enter:
+   - Goal: *AI Engineer*
+   - Skills: *Python, Machine Learning, Statistics*
+   - Experience: *Intermediate*
+   - Hours/week: *8*
+   - Timeline: *6 months*
+3. View the Dashboard — observe the skill radar showing Python and ML with real mastery scores.
+   Note the **Next Best Action** card recommending the highest-gap skill.
+4. Navigate to **Analytics** — see the deterministic skill gap bars for all AI Engineer required skills.
+   Click the ℹ icon on any skill to get a grounded "Why this?" explanation.
+5. Navigate to **My Roadmap** — view the AI-generated prerequisite-aware roadmap.
+   Click a topic chip to open its explanation panel.
+6. Navigate to **Quiz** — the recommended skill should be pre-selected.
+   Complete a quiz and observe the **mastery update banner** showing old → new mastery.
+7. Return to **My Roadmap** — click **Adapt Roadmap**.
+   Observe milestones tagged ⚡ (accelerate) or 🔁 (reinforce) based on current mastery.
+8. Navigate to **What-If Simulator**:
+   - Reduce hours to 5/week → Run Simulation → observe feasibility warning.
+   - Add "Deep Learning" to known skills → Run Simulation → observe readiness increase.
+   - Change role to ML Engineer → Run Simulation → observe changed priority skills.
 
 ---
 
-## 📡 API Endpoints
+## API Documentation
 
-### Authentication
-```
-POST /api/v1/auth/register     Register new user
-POST /api/v1/auth/login        Login → JWT tokens
-POST /api/v1/auth/refresh      Refresh access token
-GET  /api/v1/auth/me           Get current user
-```
+Interactive docs available at `http://localhost:8000/docs` (Swagger UI).
 
-### Profile
-```
-POST   /api/v1/profile         Create learner profile
-GET    /api/v1/profile         Get profile
-PATCH  /api/v1/profile         Update profile
-```
+Key endpoints:
 
-### Chat & AI Mentor
-```
-POST /api/v1/chat/message              Send message → AI response
-GET  /api/v1/chat/sessions             List chat sessions
-POST /api/v1/chat/sessions             Create session
-GET  /api/v1/chat/sessions/{id}        Get session with messages
-```
-
-### Roadmap
-```
-GET    /api/v1/roadmap                          List roadmaps
-POST   /api/v1/roadmap                          Generate new roadmap
-GET    /api/v1/roadmap/{id}                     Get roadmap details
-PATCH  /api/v1/roadmap/{id}/milestone/{mid}/complete   Complete milestone
-DELETE /api/v1/roadmap/{id}                     Delete roadmap
-```
-
-### Analytics & AI Tools
-```
-GET  /api/v1/analytics/dashboard          Dashboard stats
-POST /api/v1/analytics/skill-gap          Skill gap analysis
-GET  /api/v1/analytics/career-readiness   Career readiness score
-GET  /api/v1/analytics/weekly-plan        Weekly study plan
-POST /api/v1/analytics/quiz/generate      Generate quiz
-POST /api/v1/analytics/quiz/submit        Submit quiz answers
-POST /api/v1/analytics/resume             Analyze resume (PDF/DOCX/TXT)
-POST /api/v1/analytics/mock-interview     Generate mock interview
-POST /api/v1/analytics/progress           Log learning activity
-GET  /api/v1/analytics/progress           Get progress logs
-```
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/v1/auth/register | Create account |
+| POST | /api/v1/auth/login | Get JWT tokens |
+| GET | /api/v1/profile | Get learner profile |
+| POST | /api/v1/profile | Create profile (seeds skill mastery) |
+| GET | /api/v1/analytics/skill-gap | Deterministic skill gap |
+| GET | /api/v1/analytics/mastery | Current skill mastery map |
+| GET | /api/v1/analytics/next-best-action | Top 3 learning priorities |
+| GET | /api/v1/analytics/explain/{skill} | Grounded skill explanation |
+| POST | /api/v1/analytics/quiz/generate | Generate quiz for a topic |
+| POST | /api/v1/analytics/quiz/submit | Score quiz + update mastery |
+| POST | /api/v1/analytics/whatif | What-if simulation |
+| POST | /api/v1/roadmap | Generate personalized roadmap |
+| POST | /api/v1/roadmap/{id}/adapt | Adapt roadmap to current mastery |
+| GET | /api/v1/analytics/dashboard | Aggregated dashboard stats |
 
 ---
 
-## 🗄️ Database Schema
+## Project Structure
 
 ```
-users                   → authentication, basic info
-learner_profiles        → goals, skills, preferences
-roadmaps               → AI-generated learning paths
-milestones             → monthly roadmap steps (topics, resources, projects)
-resources              → curated learning resources
-chat_sessions          → conversation history grouping
-chat_messages          → individual AI/user messages
-progress_logs          → learning activity tracking
-quiz_results           → quiz scores and feedback
-learning_streaks       → daily streak tracking
-industry_trends        → skill demand data
-```
-
----
-
-## 🤖 AI Integration
-
-NeuraLearn uses a **3-tier AI fallback**:
-
-```
-1. Gemini 1.5 Pro (primary)
-2. OpenAI GPT-4o mini (fallback)
-3. OpenRouter (final fallback)
-```
-
-### AI Capabilities
-- **Intent Analysis**: Extracts goal, skills, experience from conversation
-- **Roadmap Generation**: Creates structured 12-month learning plans
-- **Skill Gap Analysis**: Identifies missing skills with scores
-- **Career Readiness**: Calculates readiness score with breakdown
-- **Quiz Generation**: Creates topic-specific MCQs with explanations
-- **Weekly Plans**: Daily study schedules with time allocation
-- **Resume Analysis**: Extracts skills and matches to target role
-- **Mock Interviews**: Role-specific questions with sample answers
-
----
-
-## 🎨 UI Design
-
-- **Dark theme** with glassmorphism cards
-- **Gradient accents** (blue → purple)
-- **Responsive** sidebar layout
-- **Animated** transitions with Framer Motion
-- **Interactive** milestone timeline
-- **Live charts** for skill radar, progress, readiness
-
----
-
-## 🧪 Demo Users (for testing)
-
-After starting the app, register a new account. To quickly explore:
-
-1. **Register** at http://localhost/register
-2. Complete the **5-step onboarding**
-3. Go to **AI Mentor** and say: *"I'm a 2nd year CS student. I know Python. I want to become an AI Engineer in 12 months."*
-4. Watch the AI generate your complete roadmap!
-
----
-
-## 📁 Project Structure
-
-```
-NeuraLearn/
+PathFinder-AI/
 ├── backend/
 │   ├── app/
-│   │   ├── api/routes/     ← auth, profile, chat, roadmap, analytics, admin
-│   │   ├── ai/             ← AI service (Gemini + OpenAI + OpenRouter)
-│   │   ├── core/           ← config, security, dependencies
-│   │   ├── db/             ← database session
-│   │   ├── models/         ← SQLAlchemy ORM models
-│   │   ├── schemas/        ← Pydantic request/response schemas
-│   │   ├── services/       ← business logic
-│   │   └── main.py         ← FastAPI app entry point
+│   │   ├── ai/             AI provider abstraction + all AI functions
+│   │   ├── api/routes/     FastAPI route handlers
+│   │   ├── core/           Config, security, dependencies
+│   │   ├── db/             Database session and connection
+│   │   ├── models/         SQLAlchemy ORM models
+│   │   ├── schemas/        Pydantic request/response schemas
+│   │   └── services/       Business logic (skill graph, mastery, roadmap)
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── .env.example
 ├── frontend/
 │   ├── src/
-│   │   ├── components/     ← DashboardLayout, UI components
-│   │   ├── pages/          ← Landing, Login, Register, Onboarding, Dashboard, Chat, Roadmap, Analytics, Quiz, Interview, Profile
-│   │   ├── store/          ← Zustand auth store
-│   │   ├── lib/            ← API client
-│   │   ├── types/          ← TypeScript interfaces
-│   │   └── App.tsx         ← Router
-│   ├── Dockerfile
-│   └── package.json
+│   │   ├── components/     Shared UI components
+│   │   ├── lib/            API client
+│   │   ├── pages/          Page-level React components
+│   │   ├── store/          Zustand auth store
+│   │   └── types/          TypeScript type definitions
+│   ├── package.json
+│   └── vite.config.ts
+├── .kiro/
+│   └── specs/              Feature specs (requirements, design, tasks)
 └── docker-compose.yml
 ```
 
 ---
 
-## 🏆 Hackathon Highlights
+## Technical Decisions
 
-This project demonstrates:
+**Why deterministic skill gap instead of pure LLM?**  
+LLMs produce inconsistent scores and cannot be audited. The `skill_graph.py` engine produces
+the same score for the same inputs every time, supports testing, and can be explained to the
+learner with actual numbers.
 
-- ✅ **Production-ready FastAPI** with async SQLAlchemy, JWT auth, proper error handling
-- ✅ **Gemini AI integration** with automatic fallback chain
-- ✅ **Adaptive AI**: Roadmaps evolve based on progress and quiz performance
-- ✅ **Explainable AI**: Every resource recommendation includes "why recommended"
-- ✅ **Full-stack TypeScript**: Type-safe API client, Zod validation
-- ✅ **Complete CRUD**: Users, profiles, roadmaps, milestones, quizzes, progress
-- ✅ **Resume parsing**: PDF/DOCX/TXT with skill extraction
-- ✅ **Docker-ready**: One command deployment
-- ✅ **Responsive UI**: Works on mobile and desktop
+**Why Bayesian mastery blending?**  
+A single quiz score should not completely override accumulated evidence. The credibility
+weighting formula ensures that mastery becomes more stable as more evidence accumulates,
+while still allowing significant updates from strong new evidence.
 
----
-
-Built with ❤️ for HCL Hackathon 2026
+**Why not rebuild from scratch?**  
+The existing codebase had a solid architecture (FastAPI async, React + Vite, AI provider
+abstraction). The work focused on fixing crash bugs, adding the missing deterministic layer,
+wiring up the adaptive loop, and improving the UI — not rebuilding working functionality.

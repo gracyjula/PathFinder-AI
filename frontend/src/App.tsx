@@ -13,6 +13,7 @@ import AnalyticsPage from '@/pages/AnalyticsPage'
 import ProfilePage from '@/pages/ProfilePage'
 import QuizPage from '@/pages/QuizPage'
 import InterviewPage from '@/pages/InterviewPage'
+import WhatIfPage from '@/pages/WhatIfPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -58,6 +59,7 @@ export default function App() {
           <Route path="profile" element={<ProfilePage />} />
           <Route path="quiz" element={<QuizPage />} />
           <Route path="interview" element={<InterviewPage />} />
+          <Route path="whatif" element={<WhatIfPage />} />
         </Route>
 
         {/* Fallback */}

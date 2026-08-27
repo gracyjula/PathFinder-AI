@@ -74,6 +74,7 @@ class User(Base):
     progress_logs: Mapped[list["ProgressLog"]] = relationship("ProgressLog", back_populates="user")
     quiz_results: Mapped[list["QuizResult"]] = relationship("QuizResult", back_populates="user")
     streak: Mapped[Optional["LearningStreak"]] = relationship("LearningStreak", back_populates="user", uselist=False)
+    skill_masteries: Mapped[list["SkillMastery"]] = relationship("SkillMastery", back_populates="user")
 
 
 # ─── Learner Profile ──────────────────────────────────────────────────────────
@@ -254,6 +255,49 @@ class LearningStreak(Base):
     total_days_active: Mapped[int] = mapped_column(Integer, default=0)
 
     user: Mapped["User"] = relationship("User", back_populates="streak")
+
+
+# ─── Skill Mastery ────────────────────────────────────────────────────────────
+
+class SkillMastery(Base):
+    """
+    Per-user, per-skill mastery score (0–100).
+    Updated deterministically from quiz results and onboarding self-assessment.
+    Never written by the LLM directly.
+    """
+    __tablename__ = "skill_mastery"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    skill: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    mastery_score: Mapped[float] = mapped_column(Float, default=0.0)          # 0–100
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)           # how many data points
+    last_assessed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user: Mapped["User"] = relationship("User", back_populates="skill_masteries")
+
+
+# ─── Adaptation Events ────────────────────────────────────────────────────────
+
+class AdaptationEvent(Base):
+    """
+    Records every time the system adapted a roadmap based on mastery evidence.
+    Provides an audit trail and powers the UI "roadmap was adapted" notice.
+    """
+    __tablename__ = "adaptation_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    roadmap_id: Mapped[str] = mapped_column(String(36), ForeignKey("roadmaps.id", ondelete="CASCADE"))
+    trigger: Mapped[str] = mapped_column(String(100))           # "quiz_result" | "milestone_complete" | "manual"
+    skill: Mapped[Optional[str]] = mapped_column(String(200))
+    old_mastery: Mapped[Optional[float]] = mapped_column(Float)
+    new_mastery: Mapped[Optional[float]] = mapped_column(Float)
+    action_taken: Mapped[str] = mapped_column(Text)             # human-readable description
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
 
 
 # ─── Industry Trends ──────────────────────────────────────────────────────────

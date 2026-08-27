@@ -75,11 +75,11 @@ async def _call_openrouter(messages: list[dict], model: str = "google/gemini-fla
     return resp.choices[0].message.content
 
 
-async def get_ai_response(prompt: str, system: str = "", use_openai: bool = False) -> str:
+async def get_ai_response(prompt: str, system: str = "", use_openai: bool = False, temperature: float = 0.7) -> str:
     """Get AI response with automatic fallback: Gemini → OpenAI → OpenRouter."""
     if settings.GEMINI_API_KEY and not use_openai:
         try:
-            return await _call_gemini(prompt, system)
+            return await _call_gemini(prompt, system, temperature=temperature)
         except Exception:
             pass
 
@@ -87,12 +87,12 @@ async def get_ai_response(prompt: str, system: str = "", use_openai: bool = Fals
 
     if settings.OPENAI_API_KEY:
         try:
-            return await _call_openai(messages)
+            return await _call_openai(messages, temperature=temperature)
         except Exception:
             pass
 
     if settings.OPENROUTER_API_KEY:
-        return await _call_openrouter(messages)
+        return await _call_openrouter(messages, temperature=temperature)
 
     raise RuntimeError("No AI provider configured. Set GEMINI_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY.")
 
@@ -392,6 +392,91 @@ Return ONLY valid JSON:
 
     raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.2)
     return _extract_json(raw)
+
+
+async def generate_skill_gap_explanation(
+    skill: str,
+    current_mastery: float,
+    target_role: str,
+    prerequisites: list[str],
+    strong_skills: list[str],
+) -> str:
+    """
+    Generate a specific, grounded explanation for why a skill is prioritized.
+    The explanation references actual learner data — not a generic statement.
+    """
+    prereq_text = ", ".join(prerequisites) if prerequisites else "none"
+    strong_text = ", ".join(strong_skills) if strong_skills else "none yet"
+    prompt = f"""You are NeuraLearn AI. Write a 2-3 sentence explanation for why this learner should focus on '{skill}' next.
+
+LEARNER DATA (use these exact numbers):
+- Current mastery of '{skill}': {current_mastery:.0f}%
+- Target role: {target_role}
+- Prerequisites for '{skill}': {prereq_text}
+- Learner's strong skills: {strong_text}
+
+Rules:
+- Reference the actual mastery percentage ({current_mastery:.0f}%)
+- Mention the prerequisites if relevant
+- Mention what strong skills they can build on
+- Do NOT say "This course is useful for your career" — be specific
+- Keep it to 2-3 sentences maximum"""
+
+    try:
+        return await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.3)
+    except Exception:
+        # Deterministic fallback when AI is unavailable
+        prereq_note = f" It builds on {prereq_text}." if prerequisites else ""
+        return (
+            f"Your current mastery of {skill} is {current_mastery:.0f}%, "
+            f"which is below the {target_role} target.{prereq_note} "
+            f"Improving this skill will directly increase your career readiness score."
+        )
+
+
+async def generate_adaptation_explanation(
+    skill: str,
+    old_mastery: float,
+    new_mastery: float,
+    action_taken: str,
+    target_role: str,
+) -> str:
+    """Explain what changed in the roadmap and why, based on mastery evidence."""
+    direction = "improved" if new_mastery > old_mastery else "declined"
+    delta = abs(new_mastery - old_mastery)
+    prompt = f"""NeuraLearn just adapted a learner's roadmap based on new evidence. Write 2 sentences explaining what happened and why.
+
+EVIDENCE:
+- Skill: {skill}
+- Mastery {direction} by {delta:.0f} points: {old_mastery:.0f}% → {new_mastery:.0f}%
+- Action taken: {action_taken}
+- Target role: {target_role}
+
+Be specific. Reference the numbers. Do not be generic."""
+
+    try:
+        return await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.3)
+    except Exception:
+        return f"Your {skill} mastery {direction} from {old_mastery:.0f}% to {new_mastery:.0f}%. {action_taken}"
+
+
+async def generate_whatif_explanation(
+    original_params: dict,
+    new_params: dict,
+    changes: list[str],
+) -> str:
+    """Explain the what-if simulation result in plain language."""
+    prompt = f"""A learner ran a 'what-if' simulation on their learning path. Write 3 sentences summarizing what changed and the impact.
+
+ORIGINAL: {original_params}
+SIMULATED: {new_params}
+KEY CHANGES: {', '.join(changes)}
+
+Be specific about the timeline and workload impact."""
+    try:
+        return await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.4)
+    except Exception:
+        return f"With the simulated parameters, your learning path would change: {'; '.join(changes)}."
 
 
 async def generate_mock_interview_questions(role: str, skills: list[str], difficulty: str = "intermediate") -> dict:
