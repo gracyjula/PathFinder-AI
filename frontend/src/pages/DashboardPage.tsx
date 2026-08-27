@@ -134,28 +134,28 @@ export default function DashboardPage() {
           label="Day Streak"
           value={stats?.streak.current_streak || 0}
           sub={`Best: ${stats?.streak.longest_streak || 0} days`}
-          color="from-orange-500/20 to-red-500/20"
+          cls="stat-amber"
         />
         <StatCard
-          icon={<BookOpen className="w-5 h-5 text-blue-400" />}
+          icon={<BookOpen className="w-5 h-5 text-cyan-400" />}
           label="Milestones"
           value={`${stats?.milestones.completed || 0}/${stats?.milestones.total || 0}`}
           sub={`${stats?.milestones.percentage || 0}% complete`}
-          color="from-blue-500/20 to-cyan-500/20"
+          cls="stat-blue"
         />
         <StatCard
           icon={<Trophy className="w-5 h-5 text-yellow-400" />}
           label="Quiz Avg"
           value={`${stats?.quizzes.avg_score || 0}%`}
           sub={`${stats?.quizzes.count || 0} quizzes taken`}
-          color="from-yellow-500/20 to-amber-500/20"
+          cls="stat-green"
         />
         <StatCard
           icon={<Target className="w-5 h-5 text-purple-400" />}
           label="Career Ready"
           value={`${Math.round(readiness)}%`}
           sub={readiness >= 70 ? 'Interview ready!' : 'Keep going!'}
-          color="from-purple-500/20 to-pink-500/20"
+          cls="stat-purple"
         />
       </div>
 
@@ -306,17 +306,17 @@ export default function DashboardPage() {
   )
 }
 
-function StatCard({ icon, label, value, sub, color }: {
-  icon: React.ReactNode; label: string; value: string | number; sub: string; color: string
+function StatCard({ icon, label, value, sub, cls }: {
+  icon: React.ReactNode; label: string; value: string | number; sub: string; cls: string
 }) {
   return (
-    <div className={`glass-card p-5 bg-gradient-to-br ${color}`}>
+    <div className={`glass-card p-5 rounded-2xl ${cls}`}>
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-gray-400">{label}</span>
+        <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
         {icon}
       </div>
-      <div className="text-2xl font-bold text-white mb-0.5">{value}</div>
-      <div className="text-xs text-gray-400">{sub}</div>
+      <div className="text-2xl font-bold mb-0.5" style={{ color: 'var(--text-primary)' }}>{value}</div>
+      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{sub}</div>
     </div>
   )
 }

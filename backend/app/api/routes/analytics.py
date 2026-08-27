@@ -4,7 +4,7 @@ import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as sqlfunc
+from sqlalchemy import select, func as sqlfunc, case, Integer, cast
 
 from app.db.session import get_db
 from app.models.models import User, LearnerProfile, QuizResult, ProgressLog, Roadmap, Milestone, LearningStreak
@@ -247,7 +247,7 @@ async def get_career_readiness(
     milestone_stats = await db.execute(
         select(
             sqlfunc.count(Milestone.id).label("total"),
-            sqlfunc.sum(Milestone.is_completed.cast("int")).label("completed"),
+            sqlfunc.sum(case((Milestone.is_completed == True, 1), else_=0)).label("completed"),
         )
         .join(Roadmap)
         .where(Roadmap.user_id == current_user.id)
@@ -320,7 +320,7 @@ async def get_dashboard_stats(
     milestone_stats = await db.execute(
         select(
             sqlfunc.count(Milestone.id).label("total"),
-            sqlfunc.sum(Milestone.is_completed.cast("int")).label("completed"),
+            sqlfunc.sum(case((Milestone.is_completed == True, 1), else_=0)).label("completed"),
         )
         .join(Roadmap)
         .where(Roadmap.user_id == current_user.id)

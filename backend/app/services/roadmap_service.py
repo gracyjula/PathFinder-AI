@@ -1,11 +1,14 @@
 """Roadmap service - helpers for creating and updating roadmaps."""
 import json
+import logging
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models.models import Roadmap, Milestone
+
+logger = logging.getLogger(__name__)
 
 
 async def create_roadmap_from_ai(db: AsyncSession, user_id: str, roadmap_data: dict) -> Roadmap:
@@ -23,10 +26,16 @@ async def create_roadmap_from_ai(db: AsyncSession, user_id: str, roadmap_data: d
     db.add(roadmap)
     await db.flush()
 
-    for m in roadmap_data.get("milestones", []):
-        diff_raw = m.get("difficulty", "beginner").lower()
-        valid_diffs = {"beginner", "intermediate", "advanced"}
-        diff = diff_raw if diff_raw in valid_diffs else "beginner"
+    milestones_raw = roadmap_data.get("milestones")
+    if not isinstance(milestones_raw, list):
+        logger.warning("AI returned non-list milestones: %s — using empty list", type(milestones_raw))
+        milestones_raw = []
+
+    for m in milestones_raw:
+        if not isinstance(m, dict):
+            continue
+        diff_raw = (m.get("difficulty") or "beginner").lower()
+        diff = diff_raw if diff_raw in {"beginner", "intermediate", "advanced"} else "beginner"
 
         milestone = Milestone(
             id=str(uuid.uuid4()),
@@ -34,12 +43,12 @@ async def create_roadmap_from_ai(db: AsyncSession, user_id: str, roadmap_data: d
             month_number=m.get("month_number", 1),
             title=m.get("title", ""),
             description=m.get("description"),
-            topics=json.dumps(m.get("topics", [])),
-            resources=json.dumps(m.get("resources", [])),
-            projects=json.dumps(m.get("projects", [])),
+            topics=json.dumps(m.get("topics") or []),
+            resources=json.dumps(m.get("resources") or []),
+            projects=json.dumps(m.get("projects") or []),
             estimated_hours=m.get("estimated_hours"),
             difficulty=diff,
-            outcomes=json.dumps(m.get("outcomes", [])),
+            outcomes=json.dumps(m.get("outcomes") or []),
         )
         db.add(milestone)
 
@@ -47,7 +56,7 @@ async def create_roadmap_from_ai(db: AsyncSession, user_id: str, roadmap_data: d
 
 
 async def recalculate_roadmap_progress(db: AsyncSession, roadmap_id: str) -> float:
-    """Recalculate and persist completion percentage."""
+    """Recalculate and persist completion percentage. Caller must commit."""
     result = await db.execute(
         select(Roadmap)
         .where(Roadmap.id == roadmap_id)

@@ -2,19 +2,25 @@
 AI Service - Gemini + OpenAI integration for NeuraLearn.
 Handles: chat, roadmap generation, skill gap analysis, quiz generation,
          career readiness scoring, weekly plan generation, mentor responses.
+
+Fallback chain: Gemini (google-genai) → OpenAI → OpenRouter
+All AI calls are truly async (no event-loop blocking).
 """
+import asyncio
 import json
 import re
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from openai import AsyncOpenAI
 
 from app.core.config import settings
 
-# Configure Gemini
+# Configure Gemini (new google-genai SDK)
+_gemini_client: Optional[genai.Client] = None
 if settings.GEMINI_API_KEY:
-    genai.configure(api_key=settings.GEMINI_API_KEY)
+    _gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 # Configure OpenAI client (also used for OpenRouter)
 openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
@@ -26,11 +32,9 @@ openrouter_client = AsyncOpenAI(
 
 def _extract_json(text: str) -> dict | list:
     """Extract JSON from markdown code blocks or raw text."""
-    # Try markdown code block first
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if match:
         return json.loads(match.group(1).strip())
-    # Try raw JSON
     match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
     if match:
         return json.loads(match.group(1))
@@ -38,14 +42,17 @@ def _extract_json(text: str) -> dict | list:
 
 
 async def _call_gemini(prompt: str, system: str = "", temperature: float = 0.7) -> str:
-    """Call Gemini Pro with a prompt and return text response."""
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-pro",
-        system_instruction=system or "You are NeuraLearn AI, an intelligent learning mentor.",
-    )
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(temperature=temperature, max_output_tokens=8192),
+    """Call Gemini using the new google-genai async SDK."""
+    if not _gemini_client:
+        raise RuntimeError("Gemini API key not configured")
+    response = await _gemini_client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system or "You are NeuraLearn AI, an intelligent learning mentor.",
+            temperature=temperature,
+            max_output_tokens=8192,
+        ),
     )
     return response.text
 
@@ -77,13 +84,16 @@ async def _call_openrouter(messages: list[dict], model: str = "google/gemini-fla
 
 async def get_ai_response(prompt: str, system: str = "", use_openai: bool = False, temperature: float = 0.7) -> str:
     """Get AI response with automatic fallback: Gemini → OpenAI → OpenRouter."""
-    if settings.GEMINI_API_KEY and not use_openai:
+    if _gemini_client and not use_openai:
         try:
             return await _call_gemini(prompt, system, temperature=temperature)
-        except Exception:
-            pass
+        except Exception as e:
+            pass  # fall through to next provider
 
-    messages = [{"role": "system", "content": system or "You are NeuraLearn AI."}, {"role": "user", "content": prompt}]
+    messages = [
+        {"role": "system", "content": system or "You are NeuraLearn AI."},
+        {"role": "user", "content": prompt},
+    ]
 
     if settings.OPENAI_API_KEY:
         try:
@@ -92,23 +102,27 @@ async def get_ai_response(prompt: str, system: str = "", use_openai: bool = Fals
             pass
 
     if settings.OPENROUTER_API_KEY:
-        return await _call_openrouter(messages, temperature=temperature)
+        try:
+            return await _call_openrouter(messages, temperature=temperature)
+        except Exception:
+            pass
 
-    raise RuntimeError("No AI provider configured. Set GEMINI_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY.")
+    raise RuntimeError("No AI provider available. Set GEMINI_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY.")
 
 
-# ─── Core AI Functions ────────────────────────────────────────────────────────
+# ─── System Prompt ────────────────────────────────────────────────────────────
 
 SYSTEM_MENTOR = """You are NeuraLearn AI — an expert AI mentor, career coach, and learning path advisor.
 You help learners identify their goals, analyze skill gaps, and create personalized roadmaps.
 Be motivating, precise, and data-driven. Always provide structured, actionable advice."""
 
 
+# ─── Intent Analysis ──────────────────────────────────────────────────────────
+
 async def analyze_learner_intent(user_message: str, history: list[dict]) -> dict:
     """
     Analyze user message to extract: goal, current skills, experience level,
     timeline, and determine if we have enough info to generate a roadmap.
-    Returns JSON with extracted data.
     """
     history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history[-6:]])
 
@@ -130,32 +144,46 @@ Return a JSON object with EXACTLY this structure:
   "has_enough_for_roadmap": true/false,
   "follow_up_question": "string if more info needed, else null",
   "intent": "onboarding|question|roadmap_request|mentor_chat"
-}}"""
+}}
 
-    raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.3)
+IMPORTANT: Set has_enough_for_roadmap=true if the message mentions a career goal (even briefly like "AI Engineer", "data scientist", etc.)"""
+
     try:
+        raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.3)
         return _extract_json(raw)
     except Exception:
-        return {"has_enough_for_roadmap": False, "follow_up_question": "Could you tell me more about your background and goals?", "intent": "onboarding"}
+        # Deterministic fallback — check if message contains goal keywords
+        goal_keywords = ["engineer", "scientist", "developer", "analyst", "architect", "designer", "manager"]
+        has_goal = any(kw in user_message.lower() for kw in goal_keywords)
+        return {
+            "extracted_goal": user_message[:100] if has_goal else None,
+            "current_skills": [],
+            "experience_level": "beginner",
+            "timeline_months": 12,
+            "education": None,
+            "interests": [],
+            "has_enough_for_roadmap": has_goal,
+            "follow_up_question": None if has_goal else "What career goal are you working towards?",
+            "intent": "roadmap_request" if has_goal else "onboarding",
+        }
 
+
+# ─── Roadmap Generation ───────────────────────────────────────────────────────
 
 async def generate_roadmap(profile_data: dict) -> dict:
-    """
-    Generate a complete personalized learning roadmap given learner profile.
-    Returns structured JSON with milestones.
-    """
+    """Generate a complete personalized learning roadmap."""
     prompt = f"""Create a detailed, personalized learning roadmap for this learner.
 
 LEARNER PROFILE:
 - Goal: {profile_data.get('career_goal', 'Not specified')}
-- Current Skills: {', '.join(profile_data.get('current_skills', []))}
+- Current Skills: {', '.join(profile_data.get('current_skills', [])) or 'None listed'}
 - Experience Level: {profile_data.get('experience_level', 'beginner')}
 - Timeline: {profile_data.get('target_timeline_months', 12)} months
 - Weekly Hours Available: {profile_data.get('weekly_hours', 10)}
 - Learning Style: {profile_data.get('learning_style', 'mixed')}
 - Education: {profile_data.get('education', 'Not specified')}
 
-Generate a comprehensive roadmap with monthly milestones. Return ONLY valid JSON:
+Generate a roadmap with monthly milestones. Return ONLY valid JSON (no markdown text outside the JSON):
 {{
   "title": "Roadmap title",
   "goal": "Career goal",
@@ -170,12 +198,12 @@ Generate a comprehensive roadmap with monthly milestones. Return ONLY valid JSON
       "resources": [
         {{
           "title": "Resource name",
-          "url": "https://...",
+          "url": "https://example.com",
           "type": "course|video|article|project|book",
           "provider": "Provider name",
           "is_free": true,
           "duration_hours": 20,
-          "why_recommended": "Reason for recommendation"
+          "why_recommended": "Specific reason referencing the learner gap"
         }}
       ],
       "projects": [
@@ -192,36 +220,57 @@ Generate a comprehensive roadmap with monthly milestones. Return ONLY valid JSON
     }}
   ],
   "skill_gaps_addressed": ["gap1", "gap2"],
-  "career_outcomes": ["Outcome 1", "Outcome 2"]
+  "career_outcomes": ["Outcome 1"]
 }}"""
 
-    raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.5)
-    return _extract_json(raw)
+    try:
+        raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.5)
+        data = _extract_json(raw)
+        # Validate it has milestones
+        if not isinstance(data.get("milestones"), list) or len(data["milestones"]) == 0:
+            raise ValueError("No milestones in response")
+        return data
+    except Exception as e:
+        # Structured fallback roadmap
+        goal = profile_data.get('career_goal', 'Software Engineer')
+        months = profile_data.get('target_timeline_months', 12)
+        return _fallback_roadmap(goal, months, profile_data.get('current_skills', []))
 
 
-async def analyze_skill_gap(current_skills: list[str], target_role: str) -> dict:
-    """Analyze skill gap between current skills and target role requirements."""
-    prompt = f"""Perform a comprehensive skill gap analysis.
+def _fallback_roadmap(goal: str, months: int, current_skills: list) -> dict:
+    """Deterministic fallback roadmap when AI is unavailable."""
+    phases = [
+        ("Foundations", "beginner", ["Core concepts", "Basic tools", "Environment setup"], 30),
+        ("Core Skills", "intermediate", ["Key frameworks", "Best practices", "Projects"], 40),
+        ("Advanced Topics", "intermediate", ["Advanced patterns", "Real-world projects"], 45),
+        ("Specialization", "advanced", ["Domain expertise", "Portfolio projects"], 50),
+    ]
+    milestones = []
+    per_phase = max(1, months // len(phases))
+    for i, (title, diff, topics, hours) in enumerate(phases[:months]):
+        milestones.append({
+            "month_number": i + 1,
+            "title": f"Month {i+1}: {title}",
+            "description": f"Focus on {title.lower()} for {goal}",
+            "topics": topics,
+            "resources": [{"title": f"{topics[0]} Guide", "url": "https://roadmap.sh", "type": "article", "provider": "roadmap.sh", "is_free": True, "duration_hours": 10, "why_recommended": f"Essential for {goal} foundations"}],
+            "projects": [{"title": f"{title} Project", "description": f"Build a project using {topics[0]}", "difficulty": diff, "skills_practiced": topics[:2]}],
+            "estimated_hours": hours,
+            "difficulty": diff,
+            "outcomes": [f"Understand {topics[0]}", f"Apply {topics[-1]} in practice"],
+        })
+    return {
+        "title": f"{goal} Roadmap",
+        "goal": goal,
+        "description": f"A structured {months}-month path to become a {goal}",
+        "total_months": months,
+        "milestones": milestones,
+        "skill_gaps_addressed": [],
+        "career_outcomes": [f"Qualified for {goal} roles"],
+    }
 
-TARGET ROLE: {target_role}
-CURRENT SKILLS: {', '.join(current_skills) if current_skills else 'None'}
 
-Return ONLY valid JSON:
-{{
-  "target_role": "{target_role}",
-  "required_skills": ["skill1", "skill2"],
-  "current_skills": {json.dumps(current_skills)},
-  "missing_skills": ["missing1", "missing2"],
-  "gap_percentage": 65.5,
-  "skill_scores": {{"Python": 80, "ML": 60, "Deep Learning": 0}},
-  "priority_skills": ["Most important skills to learn first"],
-  "recommendations": ["Specific recommendation 1", "Recommendation 2"],
-  "estimated_months_to_close_gap": 8
-}}"""
-
-    raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.2)
-    return _extract_json(raw)
-
+# ─── Mentor Chat ──────────────────────────────────────────────────────────────
 
 async def generate_mentor_response(
     user_message: str,
@@ -240,69 +289,87 @@ async def generate_mentor_response(
 
 {chr(10).join(context_parts)}
 
-You are acting as this learner's personal AI mentor. Be encouraging, specific, and practical.
-Keep responses concise but complete. Use bullet points when listing multiple items."""
+You are this learner's personal AI mentor. Be encouraging, specific, and practical.
+Keep responses concise but complete. Use bullet points when listing items."""
 
-    # Build message history
     messages = [{"role": "system", "content": system}]
     for msg in history[-8:]:
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_message})
 
-    if settings.GEMINI_API_KEY:
-        # Build prompt for Gemini
-        hist_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages[1:]])
-        return await _call_gemini(hist_text, system)
+    try:
+        # For Gemini, build a single prompt string
+        if _gemini_client:
+            hist_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages[1:]])
+            return await _call_gemini(hist_text, system)
+        if settings.OPENAI_API_KEY:
+            return await _call_openai(messages)
+        if settings.OPENROUTER_API_KEY:
+            return await _call_openrouter(messages)
+    except Exception:
+        pass
+    return "I'm having trouble connecting right now. Please check your API key configuration and try again."
 
-    if settings.OPENAI_API_KEY:
-        return await _call_openai(messages)
 
-    if settings.OPENROUTER_API_KEY:
-        return await _call_openrouter(messages)
+# ─── Skill Gap (AI narrative layer) ──────────────────────────────────────────
 
-    raise RuntimeError("No AI provider configured")
+async def analyze_skill_gap(current_skills: list[str], target_role: str) -> dict:
+    """AI-assisted skill gap — used as a supplement, not primary source."""
+    prompt = f"""Perform a skill gap analysis.
+TARGET ROLE: {target_role}
+CURRENT SKILLS: {', '.join(current_skills) if current_skills else 'None'}
 
+Return ONLY valid JSON:
+{{
+  "target_role": "{target_role}",
+  "required_skills": ["skill1"],
+  "current_skills": {json.dumps(current_skills)},
+  "missing_skills": ["missing1"],
+  "gap_percentage": 65.5,
+  "skill_scores": {{"Python": 80}},
+  "priority_skills": ["skill1"],
+  "recommendations": ["recommendation 1"],
+  "estimated_months_to_close_gap": 8
+}}"""
+    try:
+        raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.2)
+        return _extract_json(raw)
+    except Exception:
+        return {"target_role": target_role, "current_skills": current_skills, "missing_skills": [], "gap_percentage": 0, "skill_scores": {}, "priority_skills": [], "recommendations": [], "estimated_months_to_close_gap": 0}
+
+
+# ─── Career Readiness ─────────────────────────────────────────────────────────
 
 async def calculate_career_readiness(profile: dict, progress_data: dict) -> dict:
     """Calculate career readiness score with breakdown."""
     prompt = f"""Calculate a career readiness score for this learner.
 
-PROFILE:
-- Goal: {profile.get('career_goal')}
-- Skills: {profile.get('current_skills', [])}
-- Completed Courses: {profile.get('completed_courses', [])}
-- Experience Level: {profile.get('experience_level')}
-
-PROGRESS DATA:
-- Milestones Completed: {progress_data.get('milestones_completed', 0)}
-- Total Milestones: {progress_data.get('total_milestones', 0)}
-- Quiz Average Score: {progress_data.get('quiz_avg_score', 0)}%
-- Days Active: {progress_data.get('days_active', 0)}
+PROFILE: Goal={profile.get('career_goal')}, Skills={profile.get('current_skills', [])}, Level={profile.get('experience_level')}
+PROGRESS: Milestones={progress_data.get('milestones_completed',0)}/{progress_data.get('total_milestones',0)}, Quiz avg={progress_data.get('quiz_avg_score',0)}%, Days active={progress_data.get('days_active',0)}
 
 Return ONLY valid JSON:
 {{
   "score": 78.5,
-  "breakdown": {{
-    "skills": 80,
-    "projects": 60,
-    "certifications": 40,
-    "assessments": 75,
-    "consistency": 85
-  }},
-  "weak_areas": ["Area 1", "Area 2"],
+  "breakdown": {{"skills": 80, "projects": 60, "certifications": 40, "assessments": 75, "consistency": 85}},
+  "weak_areas": ["Area 1"],
   "strong_areas": ["Strong Area 1"],
-  "suggestions": ["Specific action 1", "Action 2"],
+  "suggestions": ["Action 1"],
   "interview_ready": false,
   "estimated_months_to_ready": 4
 }}"""
+    try:
+        raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.2)
+        return _extract_json(raw)
+    except Exception:
+        score = min(100, (progress_data.get('milestones_completed', 0) / max(1, progress_data.get('total_milestones', 1))) * 100)
+        return {"score": round(score, 1), "breakdown": {"skills": score, "projects": 0, "certifications": 0, "assessments": progress_data.get('quiz_avg_score', 0), "consistency": 50}, "weak_areas": [], "strong_areas": [], "suggestions": ["Keep completing milestones"], "interview_ready": score >= 80, "estimated_months_to_ready": max(1, int((100 - score) / 10))}
 
-    raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.2)
-    return _extract_json(raw)
 
+# ─── Quiz ─────────────────────────────────────────────────────────────────────
 
 async def generate_quiz(topic: str, difficulty: str = "intermediate", num_questions: int = 5) -> dict:
     """Generate a quiz for a given topic."""
-    prompt = f"""Create a quiz on "{topic}" at {difficulty} level with {num_questions} questions.
+    prompt = f"""Create a quiz on "{topic}" at {difficulty} level with {num_questions} multiple-choice questions.
 
 Return ONLY valid JSON:
 {{
@@ -313,27 +380,25 @@ Return ONLY valid JSON:
       "id": "q1",
       "question": "Question text?",
       "type": "mcq",
-      "options": ["A", "B", "C", "D"],
-      "correct_answer": "A",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correct_answer": "Option A",
       "explanation": "Why this is correct"
     }}
   ]
 }}"""
+    try:
+        raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.4)
+        return _extract_json(raw)
+    except Exception:
+        return {"topic": topic, "difficulty": difficulty, "questions": [{"id": "q1", "question": f"What is a key concept in {topic}?", "type": "mcq", "options": ["Concept A", "Concept B", "Concept C", "Concept D"], "correct_answer": "Concept A", "explanation": "This is a foundational concept."}]}
 
-    raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.4)
-    return _extract_json(raw)
 
+# ─── Weekly Plan ──────────────────────────────────────────────────────────────
 
 async def generate_weekly_plan(profile: dict, current_milestone: Optional[dict] = None) -> dict:
     """Generate a personalized weekly study plan."""
-    prompt = f"""Create a detailed weekly learning plan for this learner.
-
-PROFILE:
-- Goal: {profile.get('career_goal')}
-- Weekly Hours: {profile.get('weekly_hours', 10)}
-- Learning Style: {profile.get('learning_style', 'mixed')}
-- Current Skills: {profile.get('current_skills', [])}
-
+    prompt = f"""Create a weekly learning plan.
+PROFILE: Goal={profile.get('career_goal')}, Hours/week={profile.get('weekly_hours', 10)}, Style={profile.get('learning_style', 'mixed')}
 CURRENT MILESTONE: {json.dumps(current_milestone) if current_milestone else 'Starting fresh'}
 
 Return ONLY valid JSON:
@@ -341,29 +406,26 @@ Return ONLY valid JSON:
   "week_number": 1,
   "goal": "Weekly goal statement",
   "total_hours": 10,
-  "focus_topics": ["Topic 1", "Topic 2"],
+  "focus_topics": ["Topic 1"],
   "daily_plans": [
     {{
       "day": "Monday",
-      "tasks": [
-        {{
-          "title": "Task name",
-          "type": "study|practice|project|revision",
-          "duration_minutes": 60,
-          "resource": "Resource name",
-          "description": "What to do"
-        }}
-      ],
-      "total_minutes": 90
+      "tasks": [{{"title": "Task", "type": "study", "duration_minutes": 60, "resource": "Resource", "description": "What to do"}}],
+      "total_minutes": 60
     }}
   ],
-  "revision_slots": ["Saturday: Review week's topics"],
-  "assessment": "Weekly mini-quiz on topics covered"
+  "revision_slots": ["Saturday: Review"],
+  "assessment": "Weekly mini-quiz"
 }}"""
+    try:
+        raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.6)
+        return _extract_json(raw)
+    except Exception:
+        hours = profile.get('weekly_hours', 10)
+        return {"week_number": 1, "goal": f"Progress towards {profile.get('career_goal', 'your goal')}", "total_hours": hours, "focus_topics": [current_milestone.get("title", "Core topics")] if current_milestone else ["Foundations"], "daily_plans": [{"day": d, "tasks": [{"title": "Study session", "type": "study", "duration_minutes": max(30, (hours * 60) // 5), "resource": "Course material", "description": "Review planned topics"}], "total_minutes": max(30, (hours * 60) // 5)} for d in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]], "revision_slots": ["Saturday: Review week's topics"], "assessment": "End-of-week quiz on covered topics"}
 
-    raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.6)
-    return _extract_json(raw)
 
+# ─── Resume Analysis ──────────────────────────────────────────────────────────
 
 async def analyze_resume(resume_text: str, target_role: Optional[str] = None) -> dict:
     """Extract skills and analyze resume against target role."""
@@ -380,19 +442,42 @@ Return ONLY valid JSON:
   "experience_level": "beginner|intermediate|advanced",
   "education": "Degree and field",
   "work_experience_years": 2,
-  "projects_found": ["Project 1", "Project 2"],
+  "projects_found": ["Project 1"],
   "certifications": ["Cert 1"],
-  "target_role_match": {{
-    "match_percentage": 65,
-    "matching_skills": ["skill1"],
-    "missing_skills": ["missing1"],
-    "suggestions": ["suggestion 1"]
-  }}
+  "target_role_match": {{"match_percentage": 65, "matching_skills": ["skill1"], "missing_skills": ["missing1"], "suggestions": ["suggestion 1"]}}
 }}"""
+    try:
+        raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.2)
+        return _extract_json(raw)
+    except Exception:
+        return {"extracted_skills": [], "experience_level": "beginner", "education": "", "work_experience_years": 0, "projects_found": [], "certifications": [], "target_role_match": {"match_percentage": 0, "matching_skills": [], "missing_skills": [], "suggestions": []}}
 
-    raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.2)
-    return _extract_json(raw)
 
+# ─── Mock Interview ───────────────────────────────────────────────────────────
+
+async def generate_mock_interview_questions(role: str, skills: list[str], difficulty: str = "intermediate") -> dict:
+    """Generate mock interview questions for a role."""
+    prompt = f"""Generate mock interview questions for a {role} position.
+CANDIDATE SKILLS: {', '.join(skills) if skills else 'General'}
+DIFFICULTY: {difficulty}
+
+Return ONLY valid JSON:
+{{
+  "role": "{role}",
+  "sections": [
+    {{"category": "Technical", "questions": [{{"question": "Question text", "type": "conceptual", "expected_topics": ["topic1"], "difficulty": "medium", "sample_answer": "Key points"}}]}},
+    {{"category": "Behavioral", "questions": [{{"question": "Tell me about a challenge", "type": "behavioral", "expected_topics": ["teamwork"], "difficulty": "medium", "sample_answer": "Use STAR method"}}]}}
+  ],
+  "tips": ["Tip 1", "Tip 2"]
+}}"""
+    try:
+        raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.5)
+        return _extract_json(raw)
+    except Exception:
+        return {"role": role, "sections": [{"category": "Technical", "questions": [{"question": f"Explain a core concept in {role}", "type": "conceptual", "expected_topics": ["fundamentals"], "difficulty": "medium", "sample_answer": "Discuss key principles"}]}], "tips": ["Research the company", "Practice coding problems"]}
+
+
+# ─── Explainability ───────────────────────────────────────────────────────────
 
 async def generate_skill_gap_explanation(
     skill: str,
@@ -401,118 +486,49 @@ async def generate_skill_gap_explanation(
     prerequisites: list[str],
     strong_skills: list[str],
 ) -> str:
-    """
-    Generate a specific, grounded explanation for why a skill is prioritized.
-    The explanation references actual learner data — not a generic statement.
-    """
+    """Generate a grounded, specific explanation for why a skill is prioritized."""
     prereq_text = ", ".join(prerequisites) if prerequisites else "none"
-    strong_text = ", ".join(strong_skills) if strong_skills else "none yet"
-    prompt = f"""You are NeuraLearn AI. Write a 2-3 sentence explanation for why this learner should focus on '{skill}' next.
+    strong_text = ", ".join(strong_skills[:3]) if strong_skills else "none yet"
+    prompt = f"""Write a 2-3 sentence explanation for why this learner should focus on '{skill}' next.
 
-LEARNER DATA (use these exact numbers):
+LEARNER DATA:
 - Current mastery of '{skill}': {current_mastery:.0f}%
 - Target role: {target_role}
 - Prerequisites for '{skill}': {prereq_text}
 - Learner's strong skills: {strong_text}
 
-Rules:
-- Reference the actual mastery percentage ({current_mastery:.0f}%)
-- Mention the prerequisites if relevant
-- Mention what strong skills they can build on
-- Do NOT say "This course is useful for your career" — be specific
-- Keep it to 2-3 sentences maximum"""
+Rules: Reference the {current_mastery:.0f}% mastery number. Mention prerequisites if any. Do NOT say "This course is useful for your career." Be specific."""
 
     try:
         return await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.3)
     except Exception:
-        # Deterministic fallback when AI is unavailable
-        prereq_note = f" It builds on {prereq_text}." if prerequisites else ""
-        return (
-            f"Your current mastery of {skill} is {current_mastery:.0f}%, "
-            f"which is below the {target_role} target.{prereq_note} "
-            f"Improving this skill will directly increase your career readiness score."
-        )
+        prereq_note = f" It builds on {prereq_text}." if prerequisites and prereq_text != "none" else ""
+        return (f"Your current mastery of {skill} is {current_mastery:.0f}%, which needs improvement for {target_role}.{prereq_note} "
+                f"Focusing here will directly increase your career readiness score.")
 
 
-async def generate_adaptation_explanation(
-    skill: str,
-    old_mastery: float,
-    new_mastery: float,
-    action_taken: str,
-    target_role: str,
-) -> str:
-    """Explain what changed in the roadmap and why, based on mastery evidence."""
+async def generate_adaptation_explanation(skill: str, old_mastery: float, new_mastery: float, action_taken: str, target_role: str) -> str:
+    """Explain what changed in the roadmap and why."""
     direction = "improved" if new_mastery > old_mastery else "declined"
     delta = abs(new_mastery - old_mastery)
-    prompt = f"""NeuraLearn just adapted a learner's roadmap based on new evidence. Write 2 sentences explaining what happened and why.
-
-EVIDENCE:
-- Skill: {skill}
-- Mastery {direction} by {delta:.0f} points: {old_mastery:.0f}% → {new_mastery:.0f}%
-- Action taken: {action_taken}
-- Target role: {target_role}
-
-Be specific. Reference the numbers. Do not be generic."""
-
     try:
+        prompt = f"""Write 2 sentences explaining this roadmap adaptation.
+Skill: {skill}, mastery {direction} by {delta:.0f} points: {old_mastery:.0f}% → {new_mastery:.0f}%
+Action: {action_taken}, Target role: {target_role}
+Be specific. Reference the numbers."""
         return await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.3)
     except Exception:
         return f"Your {skill} mastery {direction} from {old_mastery:.0f}% to {new_mastery:.0f}%. {action_taken}"
 
 
-async def generate_whatif_explanation(
-    original_params: dict,
-    new_params: dict,
-    changes: list[str],
-) -> str:
-    """Explain the what-if simulation result in plain language."""
-    prompt = f"""A learner ran a 'what-if' simulation on their learning path. Write 3 sentences summarizing what changed and the impact.
-
+async def generate_whatif_explanation(original_params: dict, new_params: dict, changes: list[str]) -> str:
+    """Explain the what-if simulation result."""
+    try:
+        prompt = f"""Write 3 sentences summarizing this learning path simulation.
 ORIGINAL: {original_params}
 SIMULATED: {new_params}
 KEY CHANGES: {', '.join(changes)}
-
-Be specific about the timeline and workload impact."""
-    try:
+Be specific about timeline and workload impact."""
         return await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.4)
     except Exception:
         return f"With the simulated parameters, your learning path would change: {'; '.join(changes)}."
-
-
-async def generate_mock_interview_questions(role: str, skills: list[str], difficulty: str = "intermediate") -> dict:
-    """Generate mock interview questions for a role."""
-    prompt = f"""Generate mock interview questions for a {role} position.
-
-CANDIDATE SKILLS: {', '.join(skills)}
-DIFFICULTY: {difficulty}
-
-Return ONLY valid JSON:
-{{
-  "role": "{role}",
-  "sections": [
-    {{
-      "category": "Technical",
-      "questions": [
-        {{
-          "question": "Question text",
-          "type": "conceptual|coding|behavioral|system_design",
-          "expected_topics": ["topic1"],
-          "difficulty": "easy|medium|hard",
-          "sample_answer": "Key points to cover"
-        }}
-      ]
-    }},
-    {{
-      "category": "Behavioral",
-      "questions": []
-    }},
-    {{
-      "category": "System Design",
-      "questions": []
-    }}
-  ],
-  "tips": ["Interview tip 1", "Tip 2"]
-}}"""
-
-    raw = await get_ai_response(prompt, SYSTEM_MENTOR, temperature=0.5)
-    return _extract_json(raw)

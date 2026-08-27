@@ -3,14 +3,15 @@ import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'react-hot-toast'
 import App from './App.tsx'
+import { initTheme } from './store/themeStore'
 import './index.css'
+
+// Apply persisted theme before first render
+initTheme()
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: 1,
-    },
+    queries: { staleTime: 1000 * 60 * 5, retry: 1 },
   },
 })
 
@@ -23,9 +24,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         toastOptions={{
           duration: 4000,
           style: {
-            background: '#1e1b4b',
-            color: '#e0e7ff',
-            border: '1px solid #4c6ef5',
+            background: 'var(--bg-surface)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border)',
           },
         }}
       />

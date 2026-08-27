@@ -28,7 +28,7 @@ export default function LandingPage() {
   const [showDemo, setShowDemo] = useState(false)
 
   return (
-    <div className="min-h-screen bg-[#0a0a1a] text-white overflow-x-hidden">
+    <div className="min-h-screen text-white overflow-x-hidden" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       {/* Nav */}
       <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 backdrop-blur-md bg-black/20 border-b border-white/5">
         <div className="flex items-center gap-2">
