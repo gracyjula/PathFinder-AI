@@ -26,6 +26,21 @@ dist/
 *.db
 *.sqlite3
 
-# Misc
+# OS
 .DS_Store
 Thumbs.db
+
+# Kiro IDE (sessions, hooks, cache — keep only .kiro/specs/)
+.kiro/hooks/
+.kiro/sessions/
+.kiro/cache/
+.kiro/settings/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Build artifacts
+frontend/dist/
+backend/dist/
