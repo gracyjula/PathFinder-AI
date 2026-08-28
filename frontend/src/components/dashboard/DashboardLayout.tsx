@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import {
   Brain, LayoutDashboard, MessageSquare, Map, BarChart2, User,
   FileQuestion, Mic, LogOut, Menu, X, Zap, Sun, Moon,
-  RefreshCw, ChevronDown,
+  RefreshCw, ChevronDown, Target,
 } from 'lucide-react'
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -10,14 +10,15 @@ import { useAuthStore } from '@/store/authStore'
 import { useThemeStore } from '@/store/themeStore'
 
 const NAV_ITEMS = [
-  { to: '/dashboard',           label: 'Dashboard',       icon: LayoutDashboard, end: true, color: 'text-indigo-400' },
-  { to: '/dashboard/chat',      label: 'AI Mentor',       icon: MessageSquare,              color: 'text-cyan-400'   },
-  { to: '/dashboard/roadmap',   label: 'My Roadmap',      icon: Map,                        color: 'text-purple-400' },
-  { to: '/dashboard/analytics', label: 'Analytics',       icon: BarChart2,                  color: 'text-pink-400'   },
-  { to: '/dashboard/quiz',      label: 'Quiz',            icon: FileQuestion,               color: 'text-amber-400'  },
-  { to: '/dashboard/whatif',    label: 'What-If Simulator',icon: Zap,                       color: 'text-emerald-400'},
-  { to: '/dashboard/interview', label: 'Mock Interview',  icon: Mic,                        color: 'text-rose-400'   },
-  { to: '/dashboard/profile',   label: 'Profile',         icon: User,                       color: 'text-sky-400'    },
+  { to: '/dashboard',           label: 'Dashboard',        icon: LayoutDashboard, end: true, color: 'text-indigo-400' },
+  { to: '/dashboard/chat',      label: 'AI Mentor',        icon: MessageSquare,              color: 'text-cyan-400'   },
+  { to: '/dashboard/skills',    label: 'Skill Gap',        icon: Target,                     color: 'text-rose-400'   },
+  { to: '/dashboard/roadmap',   label: 'My Roadmap',       icon: Map,                        color: 'text-purple-400' },
+  { to: '/dashboard/analytics', label: 'Analytics',        icon: BarChart2,                  color: 'text-pink-400'   },
+  { to: '/dashboard/quiz',      label: 'Quiz',             icon: FileQuestion,               color: 'text-amber-400'  },
+  { to: '/dashboard/whatif',    label: 'What-If Simulator',icon: Zap,                        color: 'text-emerald-400'},
+  { to: '/dashboard/interview', label: 'Mock Interview',   icon: Mic,                        color: 'text-sky-400'    },
+  { to: '/dashboard/profile',   label: 'Profile',          icon: User,                       color: 'text-gray-400'   },
 ]
 
 export default function DashboardLayout() {

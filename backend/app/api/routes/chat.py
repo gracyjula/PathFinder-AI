@@ -112,6 +112,10 @@ async def send_message(
             "learning_style": profile.learning_style,
         }
 
+    # ── Load mastery context for grounded answers ─────────────────────────────
+    from app.services.mastery_service import get_mastery_map as _get_mastery
+    mastery_map = await _get_mastery(db, current_user.id)
+
     # ── Check for existing roadmaps (any status, not just active) ────────────
     # We allow regeneration if user explicitly asks for a new roadmap
     roadmap_result = await db.execute(
@@ -193,7 +197,7 @@ async def send_message(
             ai_response_text = intent_data["follow_up_question"]
         else:
             ai_response_text = await generate_mentor_response(
-                payload.content, history, profile_dict, roadmap_ctx
+                payload.content, history, profile_dict, roadmap_ctx, mastery_map or None
             )
 
     # Update session title on first real message

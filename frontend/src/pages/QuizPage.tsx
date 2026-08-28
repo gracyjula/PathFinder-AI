@@ -169,6 +169,21 @@ export default function QuizPage() {
                     </p>
                   </div>
                 )}
+
+                {/* Path Updated banner — shown when adaptation triggered */}
+                {result.adaptation?.triggered && result.adaptation.explanation && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-xl p-3 border"
+                    style={{ background: 'rgba(99,102,241,0.12)', borderColor: 'rgba(99,102,241,0.3)' }}
+                  >
+                    <p className="text-xs font-semibold text-indigo-300 mb-1.5 flex items-center gap-1.5">
+                      🔄 Your Learning Path Has Adapted
+                    </p>
+                    <p className="text-xs text-gray-300 leading-relaxed">{result.adaptation.explanation}</p>
+                  </motion.div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

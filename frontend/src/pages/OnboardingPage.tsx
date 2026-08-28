@@ -7,13 +7,14 @@ import api from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 
 const SKILLS_POOL = [
-  'Python', 'JavaScript', 'Java', 'C++', 'SQL', 'ML', 'Deep Learning',
-  'NLP', 'React', 'Node.js', 'Docker', 'AWS', 'DSA', 'System Design',
+  'Python', 'JavaScript', 'Java', 'C++', 'SQL', 'Machine Learning', 'Deep Learning',
+  'NLP', 'React', 'Node.js', 'Docker', 'AWS', 'Data Structures', 'System Design',
   'MongoDB', 'TensorFlow', 'PyTorch', 'Git', 'Linux', 'TypeScript',
+  'Statistics', 'Mathematics', 'Generative AI', 'MLOps', 'Data Analysis',
 ]
 
 const INTERESTS = ['AI/ML', 'Web Development', 'Data Science', 'Cloud', 'Cybersecurity', 'Mobile Dev', 'DevOps', 'Blockchain']
-const GOALS = ['AI Engineer', 'Data Scientist', 'Full Stack Developer', 'Cloud Engineer', 'ML Engineer', 'Software Engineer', 'Crack GATE CSE', 'Data Analyst', 'Generative AI Engineer']
+const GOALS = ['AI Engineer', 'ML Engineer', 'Data Scientist', 'Full Stack Developer', 'Cloud Engineer', 'Software Engineer', 'Crack GATE CSE', 'Data Analyst', 'Generative AI Engineer', 'Backend Developer', 'DevOps Engineer']
 const LEARNING_STYLES = [
   { value: 'visual', label: 'Visual', desc: 'Videos, diagrams, charts' },
   { value: 'reading', label: 'Reading', desc: 'Articles, books, docs' },
@@ -28,6 +29,7 @@ export default function OnboardingPage() {
   const { fetchProfile } = useAuthStore()
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [customSkill, setCustomSkill] = useState('')
   const [data, setData] = useState({
     education: '', degree: '', year_of_study: 2, institution: '',
     career_goal: '', target_timeline_months: 12, learning_goal: '',
@@ -45,8 +47,23 @@ export default function OnboardingPage() {
     }))
   }
 
+  const addCustomSkill = () => {
+    const s = customSkill.trim()
+    if (s && !data.current_skills.includes(s)) {
+      setData(d => ({ ...d, current_skills: [...d.current_skills, s] }))
+      setCustomSkill('')
+    }
+  }
+
+  const handleNext = () => {
+    if (step === 1 && !data.career_goal.trim()) {
+      toast.error('Please select or type a career goal before continuing')
+      return
+    }
+    setStep(s => s + 1)
+  }
+
   const handleSubmit = async () => {
-    setLoading(true)
     try {
       await api.post('/profile', data)
       await fetchProfile()
@@ -60,7 +77,7 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a1a] flex items-center justify-center px-4 py-10">
+    <div className="min-h-screen flex items-center justify-center px-4 py-10" style={{ background: 'var(--bg-base)' }}>
       <div className="w-full max-w-xl">
         {/* Header */}
         <div className="text-center mb-8">
@@ -150,7 +167,7 @@ export default function OnboardingPage() {
               <motion.div key="step2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
                 <h2 className="text-lg font-semibold mb-2">Current Skills</h2>
                 <p className="text-gray-400 text-sm mb-4">Select all that apply</p>
-                <div className="flex flex-wrap gap-2 mb-6">
+                <div className="flex flex-wrap gap-2 mb-4">
                   {SKILLS_POOL.map(skill => (
                     <button key={skill} onClick={() => toggle('current_skills', skill)}
                       className={`px-3 py-1.5 rounded-full text-sm transition-all border ${
@@ -162,6 +179,28 @@ export default function OnboardingPage() {
                     </button>
                   ))}
                 </div>
+                {/* Custom skill input */}
+                <div className="flex gap-2 mb-6">
+                  <input
+                    value={customSkill}
+                    onChange={e => setCustomSkill(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addCustomSkill()}
+                    placeholder="Add a custom skill…"
+                    className="input-field py-2 text-sm flex-1"
+                  />
+                  <button onClick={addCustomSkill} disabled={!customSkill.trim()} className="btn-secondary py-2 px-3 text-sm">Add</button>
+                </div>
+                {/* Show any custom skills added */}
+                {data.current_skills.filter(s => !SKILLS_POOL.includes(s)).length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {data.current_skills.filter(s => !SKILLS_POOL.includes(s)).map(skill => (
+                      <button key={skill} onClick={() => toggle('current_skills', skill)}
+                        className="px-3 py-1.5 rounded-full text-sm bg-accent-500/20 border border-accent-500 text-accent-300">
+                        {skill} ✕
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <h2 className="text-lg font-semibold mb-2">Interests</h2>
                 <div className="flex flex-wrap gap-2">
                   {INTERESTS.map(i => (
@@ -231,7 +270,7 @@ export default function OnboardingPage() {
               <ArrowLeft className="w-4 h-4" /> Back
             </button>
             {step < 4 ? (
-              <button onClick={() => setStep(s => s + 1)} className="btn-primary flex items-center gap-2">
+              <button onClick={handleNext} className="btn-primary flex items-center gap-2">
                 Next <ArrowRight className="w-4 h-4" />
               </button>
             ) : (

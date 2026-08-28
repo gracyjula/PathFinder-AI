@@ -1,17 +1,31 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, Tooltip, Cell,
 } from 'recharts'
-import { Flame, Target, BookOpen, Trophy, ArrowRight, Zap, Brain, TrendingUp, Lightbulb, ChevronRight, AlertTriangle } from 'lucide-react'
+import { Flame, Target, BookOpen, Trophy, ArrowRight, Zap, Brain, TrendingUp, Lightbulb, ChevronRight, AlertTriangle, Loader2 } from 'lucide-react'
 import { motion } from 'framer-motion'
+import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import type { DashboardStats, NextBestAction, SkillGapReport } from '@/types'
 
 export default function DashboardPage() {
   const { user, profile } = useAuthStore()
+  const qc = useQueryClient()
+
+  const demoSeedMutation = useMutation({
+    mutationFn: () => api.post('/analytics/demo-seed'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+      qc.invalidateQueries({ queryKey: ['mastery'] })
+      qc.invalidateQueries({ queryKey: ['skill-gap-current'] })
+      qc.invalidateQueries({ queryKey: ['next-best-action'] })
+      toast.success('🎯 Demo persona seeded! AI Engineer, 8h/wk, Python 90% → MLOps 10%')
+    },
+    onError: () => toast.error('Seed failed — complete onboarding first'),
+  })
 
   const { data: stats, isLoading } = useQuery<DashboardStats>({
     queryKey: ['dashboard'],
@@ -69,15 +83,27 @@ export default function DashboardPage() {
   return (
     <div className="max-w-7xl mx-auto">
       {/* Greeting */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white mb-1">
-          Welcome back, <span className="gradient-text">{user?.full_name?.split(' ')[0] || user?.username}</span> 👋
-        </h1>
-        <p className="text-gray-400 text-sm">
-          {profile?.career_goal
-            ? `You're on track to become a ${profile.career_goal}`
-            : 'Complete your profile to get started'}
-        </p>
+      <div className="mb-8 flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white mb-1">
+            Welcome back, <span className="gradient-text">{user?.full_name?.split(' ')[0] || user?.username}</span> 👋
+          </h1>
+          <p className="text-gray-400 text-sm">
+            {profile?.career_goal
+              ? `You're on track to become a ${profile.career_goal}`
+              : 'Complete your profile to get started'}
+          </p>
+        </div>
+        {/* Demo seed button — for judges/demos */}
+        <button
+          onClick={() => demoSeedMutation.mutate()}
+          disabled={demoSeedMutation.isPending}
+          className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 opacity-60 hover:opacity-100"
+          title="Seed demo persona: AI Engineer, Python 90%, MLOps 10%"
+        >
+          {demoSeedMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '🎯'}
+          Demo Seed
+        </button>
       </div>
 
       {/* ── NEXT BEST ACTION ─────────────────────────────────────────── */}
@@ -288,10 +314,10 @@ export default function DashboardPage() {
       {/* Quick Actions */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { to: '/dashboard/chat', label: 'Chat with AI Mentor', icon: Brain, color: 'from-blue-500 to-cyan-500' },
-          { to: '/dashboard/roadmap', label: 'View Roadmap', icon: Target, color: 'from-purple-500 to-pink-500' },
-          { to: '/dashboard/quiz', label: 'Take a Quiz', icon: Trophy, color: 'from-yellow-500 to-orange-500' },
-          { to: '/dashboard/whatif', label: 'What-If Simulator', icon: Zap, color: 'from-green-500 to-emerald-500' },
+          { to: '/dashboard/chat',   label: 'Chat with AI Mentor',    icon: Brain,   color: 'from-blue-500 to-cyan-500'    },
+          { to: '/dashboard/skills', label: 'Skill Gap Analysis',     icon: Target,  color: 'from-rose-500 to-pink-500'    },
+          { to: '/dashboard/quiz',   label: 'Take a Quiz',            icon: Trophy,  color: 'from-yellow-500 to-orange-500'},
+          { to: '/dashboard/whatif', label: 'What-If Simulator',      icon: Zap,     color: 'from-green-500 to-emerald-500'},
         ].map(action => (
           <Link key={action.to} to={action.to}
             className="glass-card-hover p-5 flex flex-col items-start gap-3 group">

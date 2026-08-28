@@ -1,7 +1,7 @@
 version: '3.9'
 
 services:
-  # ─── Database ──────────────────────────────────────────────────────────────
+  # ─── Database (required) ────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: neuralearn_db
@@ -20,32 +20,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─── Redis ─────────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: neuralearn_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ─── ChromaDB ──────────────────────────────────────────────────────────────
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: neuralearn_chroma
-    restart: unless-stopped
-    volumes:
-      - chroma_data:/chroma/chroma
-    ports:
-      - "8001:8000"
-    environment:
-      - ALLOW_RESET=true
-
-  # ─── Backend ───────────────────────────────────────────────────────────────
+  # ─── Backend ────────────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -57,26 +32,27 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/neuralearn
       SYNC_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/neuralearn
-      REDIS_URL: redis://redis:6379/0
-      CHROMA_HOST: chromadb
-      CHROMA_PORT: 8000
+      # Override these in ./backend/.env — never commit real keys
+      # GEMINI_API_KEY: your-key-here
+      # OPENAI_API_KEY: your-key-here
+      FRONTEND_URL: http://localhost
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     volumes:
       - ./backend:/app
 
-  # ─── Frontend ──────────────────────────────────────────────────────────────
+  # ─── Frontend ───────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: neuralearn_frontend
     restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:8000
     ports:
       - "80:80"
     depends_on:
@@ -84,4 +60,3 @@ services:
 
 volumes:
   postgres_data:
-  chroma_data:

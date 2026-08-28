@@ -406,6 +406,7 @@ async def submit_quiz(
 
     # Record adaptation event if mastery changed significantly (>5 points)
     mastery_delta = new_mastery - old_mastery
+    adaptation_explanation = None
     if abs(mastery_delta) > 5:
         # Find the user's active roadmap
         roadmap_result = await db.execute(
@@ -417,6 +418,10 @@ async def submit_quiz(
         roadmap = roadmap_result.scalar_one_or_none()
         if roadmap:
             direction = "increased" if mastery_delta > 0 else "decreased"
+            action = (
+                f"Quiz score {score_rounded:.0f}% on {payload.topic}: "
+                f"mastery {direction} from {old_mastery:.0f}% to {new_mastery:.0f}%"
+            )
             await record_adaptation(
                 db=db,
                 user_id=current_user.id,
@@ -425,11 +430,25 @@ async def submit_quiz(
                 skill=payload.topic,
                 old_mastery=old_mastery,
                 new_mastery=new_mastery,
-                action_taken=(
-                    f"Quiz score {score_rounded:.0f}% on {payload.topic}: "
-                    f"mastery {direction} from {old_mastery:.0f}% to {new_mastery:.0f}%"
-                ),
+                action_taken=action,
             )
+            # Generate AI explanation for the adaptation (non-blocking)
+            try:
+                from app.ai.ai_service import generate_adaptation_explanation
+                profile_result = await db.execute(
+                    select(LearnerProfile).where(LearnerProfile.user_id == current_user.id)
+                )
+                profile = profile_result.scalar_one_or_none()
+                target_role = profile.career_goal if profile else "your target role"
+                adaptation_explanation = await generate_adaptation_explanation(
+                    skill=payload.topic,
+                    old_mastery=old_mastery,
+                    new_mastery=new_mastery,
+                    action_taken=action,
+                    target_role=target_role,
+                )
+            except Exception:
+                adaptation_explanation = action
 
     await db.commit()
 
@@ -445,6 +464,10 @@ async def submit_quiz(
             "new_mastery": round(new_mastery, 1),
             "delta": round(mastery_delta, 1),
         },
+        "adaptation": {
+            "triggered": abs(mastery_delta) > 5,
+            "explanation": adaptation_explanation,
+        } if abs(mastery_delta) > 5 else {"triggered": False, "explanation": None},
     }
 
 
@@ -709,8 +732,84 @@ async def whatif_simulation(
     }
 
 
+@router.post("/demo-seed", response_model=dict)
+async def seed_demo_persona(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    One-click demo persona seed for judges/demos.
+    Creates the canonical NeuraLearn demo learner:
+      Target: AI Engineer | Timeline: 6mo | 8h/wk
+      Python 90, ML 70, Stats 60, Deep Learning 40, GenAI 20, MLOps 10
+    Idempotent — safe to call multiple times.
+    """
+    from app.services.mastery_service import upsert_mastery
+
+    # Update or create profile
+    profile_result = await db.execute(
+        select(LearnerProfile).where(LearnerProfile.user_id == current_user.id)
+    )
+    profile = profile_result.scalar_one_or_none()
+
+    demo_skills = ["Python", "Machine Learning", "Statistics", "Deep Learning", "Generative AI", "MLOps"]
+    demo_skills_json = json.dumps(demo_skills)
+
+    if profile:
+        profile.career_goal = "AI Engineer"
+        profile.experience_level = "intermediate"
+        profile.weekly_hours = 8
+        profile.target_timeline_months = 6
+        profile.learning_style = "mixed"
+        profile.current_skills = demo_skills_json
+    else:
+        profile = LearnerProfile(
+            user_id=current_user.id,
+            career_goal="AI Engineer",
+            experience_level="intermediate",
+            weekly_hours=8,
+            target_timeline_months=6,
+            learning_style="mixed",
+            current_skills=demo_skills_json,
+        )
+        db.add(profile)
+    await db.flush()
+
+    # Seed mastery scores deterministically — demo-canonical values
+    demo_mastery = {
+        "Python": 90.0,
+        "Machine Learning": 70.0,
+        "Statistics": 60.0,
+        "Deep Learning": 40.0,
+        "Generative AI": 20.0,
+        "MLOps": 10.0,
+    }
+    for skill, score in demo_mastery.items():
+        await upsert_mastery(db, current_user.id, skill, score, flush=False)
+
+    await db.commit()
+
+    # Recompute gap
+    gap_result = await get_skill_gap_for_user(db, current_user.id, "AI Engineer", "intermediate")
+
+    return {
+        "message": "Demo persona seeded successfully",
+        "profile": {
+            "career_goal": "AI Engineer",
+            "experience_level": "intermediate",
+            "weekly_hours": 8,
+            "timeline_months": 6,
+        },
+        "mastery": demo_mastery,
+        "career_readiness_pct": gap_result.career_readiness_pct,
+        "gap_skills": gap_result.gap_skills,
+        "priority_skills": gap_result.priority_skills[:4],
+    }
+
+
 @router.get("/progress", response_model=list[ProgressLogOut])
-async def get_progress_logs(    limit: int = 50,
+async def get_progress_logs(
+    limit: int = 50,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

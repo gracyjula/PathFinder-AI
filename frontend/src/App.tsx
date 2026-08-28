@@ -14,6 +14,7 @@ import ProfilePage from '@/pages/ProfilePage'
 import QuizPage from '@/pages/QuizPage'
 import InterviewPage from '@/pages/InterviewPage'
 import WhatIfPage from '@/pages/WhatIfPage'
+import SkillGapPage from '@/pages/SkillGapPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="quiz" element={<QuizPage />} />
           <Route path="interview" element={<InterviewPage />} />
           <Route path="whatif" element={<WhatIfPage />} />
+          <Route path="skills" element={<SkillGapPage />} />
         </Route>
 
         {/* Fallback */}

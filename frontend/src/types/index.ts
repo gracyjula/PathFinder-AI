@@ -283,6 +283,10 @@ export interface QuizResult {
     new_mastery: number
     delta: number
   }
+  adaptation: {
+    triggered: boolean
+    explanation: string | null
+  }
 }
 
 export interface MockInterview {

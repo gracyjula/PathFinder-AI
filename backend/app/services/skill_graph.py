@@ -171,6 +171,49 @@ ROLE_SKILL_GRAPH: dict[str, list[SkillNode]] = {
         SkillNode("Machine Learning",  0.5, ["Python", "Statistics"],        "Predictive analysis"),
         SkillNode("Git",               0.4, [],                              "Version control"),
     ],
+
+    "Backend Developer": [
+        SkillNode("Python",            0.8, [],                              "Backend scripting language"),
+        SkillNode("Java",              0.8, [],                              "Enterprise backend language"),
+        SkillNode("SQL",               1.0, [],                              "Relational databases"),
+        SkillNode("APIs",              1.0, ["Python"],                      "REST API design"),
+        SkillNode("System Design",     0.9, ["APIs", "SQL"],                 "Scalable architecture"),
+        SkillNode("Docker",            0.7, [],                              "Containerization"),
+        SkillNode("Git",               0.8, [],                              "Version control"),
+        SkillNode("Linux",             0.6, [],                              "Server administration"),
+        SkillNode("Cloud",             0.6, ["Docker"],                      "Deployment platforms"),
+        SkillNode("Data Structures",   0.8, [],                              "Core CS fundamentals"),
+        SkillNode("Algorithms",        0.7, ["Data Structures"],             "Problem solving"),
+    ],
+
+    "Crack GATE CSE": [
+        SkillNode("Data Structures",   1.0, [],                              "Arrays, trees, graphs — GATE core"),
+        SkillNode("Algorithms",        1.0, ["Data Structures"],             "Sorting, DP, greedy — GATE core"),
+        SkillNode("Operating Systems", 0.9, [],                              "Process management, memory, scheduling"),
+        SkillNode("Computer Networks", 0.9, [],                              "OSI, TCP/IP, routing protocols"),
+        SkillNode("DBMS",              0.9, [],                              "Relational model, SQL, transactions"),
+        SkillNode("Computer Organization", 0.8, [],                         "CPU, memory hierarchy, pipelining"),
+        SkillNode("Theory of Computation", 0.8, [],                         "Automata, grammars, complexity"),
+        SkillNode("Compiler Design",   0.7, ["Theory of Computation"],       "Parsing, code generation"),
+        SkillNode("Discrete Mathematics", 0.8, [],                          "Logic, sets, graph theory"),
+        SkillNode("Linear Algebra",    0.6, [],                              "Matrices, eigenvalues"),
+        SkillNode("Calculus",          0.5, [],                              "Limits, derivatives, integration"),
+        SkillNode("Programming (C/C++)", 0.7, [],                            "Core GATE programming"),
+    ],
+
+    "DevOps Engineer": [
+        SkillNode("Linux",             1.0, [],                              "Linux administration"),
+        SkillNode("Git",               0.8, [],                              "Version control"),
+        SkillNode("Python",            0.7, [],                              "Scripting and automation"),
+        SkillNode("Docker",            1.0, ["Linux"],                       "Containerization"),
+        SkillNode("Kubernetes",        0.9, ["Docker"],                      "Container orchestration"),
+        SkillNode("CI/CD",             1.0, ["Git", "Docker"],               "Pipelines: Jenkins, GitHub Actions"),
+        SkillNode("Cloud",             0.9, ["Linux"],                       "AWS/GCP/Azure"),
+        SkillNode("Terraform",         0.8, ["Cloud"],                       "Infrastructure as code"),
+        SkillNode("Monitoring",        0.7, ["Cloud"],                       "Prometheus, Grafana, ELK"),
+        SkillNode("Networking",        0.7, [],                              "TCP/IP, DNS, load balancing"),
+        SkillNode("Security",          0.6, ["Networking"],                  "IAM, secrets management"),
+    ],
 }
 
 # Alias normalization — maps common user input to canonical skill names
@@ -212,6 +255,18 @@ SKILL_ALIASES: dict[str, str] = {
     "vector db": "Vector Databases",
     "vector databases": "Vector Databases",
     "prompt engineering": "Prompt Engineering",
+    "gate": "Data Structures",
+    "gate cse": "Data Structures",
+    "c++": "Programming (C/C++)",
+    "c/c++": "Programming (C/C++)",
+    "os": "Operating Systems",
+    "cn": "Computer Networks",
+    "toc": "Theory of Computation",
+    "coa": "Computer Organization",
+    "dbms": "DBMS",
+    "discrete maths": "Discrete Mathematics",
+    "devops": "CI/CD",
+    "monitoring": "Monitoring",
 }
 
 # Mastery thresholds
@@ -437,4 +492,4 @@ def get_next_best_actions(
 
 
 def list_known_roles() -> list[str]:
-    return list(ROLE_SKILL_GRAPH.keys())
+    return sorted(ROLE_SKILL_GRAPH.keys())

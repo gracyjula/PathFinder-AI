@@ -277,20 +277,41 @@ async def generate_mentor_response(
     history: list[dict],
     profile: Optional[dict] = None,
     roadmap_context: Optional[dict] = None,
+    mastery_context: Optional[dict] = None,
 ) -> str:
-    """Generate a contextual mentor response."""
+    """Generate a contextual mentor response, grounded in learner's actual state."""
     context_parts = []
     if profile:
-        context_parts.append(f"Learner Profile: Goal={profile.get('career_goal')}, Skills={profile.get('current_skills')}, Level={profile.get('experience_level')}")
+        context_parts.append(
+            f"LEARNER PROFILE: Goal={profile.get('career_goal')}, "
+            f"Skills={profile.get('current_skills')}, Level={profile.get('experience_level')}, "
+            f"Weekly hours={profile.get('weekly_hours')}"
+        )
     if roadmap_context:
-        context_parts.append(f"Active Roadmap: {roadmap_context.get('title')}, Progress={roadmap_context.get('completion_percentage')}%")
+        context_parts.append(
+            f"ACTIVE ROADMAP: {roadmap_context.get('title')}, "
+            f"Progress={roadmap_context.get('completion_percentage')}% complete"
+        )
+    if mastery_context:
+        # Include top 5 strongest and top 3 gaps so the mentor can reference them
+        sorted_mastery = sorted(mastery_context.items(), key=lambda x: x[1], reverse=True)
+        strong = [(k, v) for k, v in sorted_mastery if v >= 70][:5]
+        gaps = [(k, v) for k, v in sorted_mastery if v < 35][:3]
+        if strong:
+            context_parts.append(f"STRONG SKILLS (mastery ≥70%): " + ", ".join(f"{k} {v:.0f}%" for k, v in strong))
+        if gaps:
+            context_parts.append(f"SKILL GAPS (mastery <35%): " + ", ".join(f"{k} {v:.0f}%" for k, v in gaps))
 
     system = f"""{SYSTEM_MENTOR}
 
 {chr(10).join(context_parts)}
 
-You are this learner's personal AI mentor. Be encouraging, specific, and practical.
-Keep responses concise but complete. Use bullet points when listing items."""
+You are this learner's personal AI mentor. Answer their question using the LEARNER PROFILE and mastery data above.
+- When asked "Why am I learning X?", reference their actual mastery score for X and its prerequisites.
+- When asked "What should I do next?", use the SKILL GAPS data.
+- When asked about skipping, reference their mastery score.
+- Be specific — reference actual numbers, never give generic advice.
+- Keep responses concise but complete. Use bullet points when listing items."""
 
     messages = [{"role": "system", "content": system}]
     for msg in history[-8:]:
@@ -298,7 +319,6 @@ Keep responses concise but complete. Use bullet points when listing items."""
     messages.append({"role": "user", "content": user_message})
 
     try:
-        # For Gemini, build a single prompt string
         if _gemini_client:
             hist_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages[1:]])
             return await _call_gemini(hist_text, system)
