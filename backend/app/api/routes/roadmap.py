@@ -123,7 +123,7 @@ async def complete_milestone(
     milestone.completed_at = datetime.now(timezone.utc)
     await db.flush()
 
-    pct = await recalculate_roadmap_progress(db, roadmap_id)
+    pct = await recalculate_roadmap_progress(db, str(roadmap_id))
     await db.commit()
     return {"message": "Milestone completed", "completion_percentage": pct}
 

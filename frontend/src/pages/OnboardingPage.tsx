@@ -64,6 +64,7 @@ export default function OnboardingPage() {
   }
 
   const handleSubmit = async () => {
+    setLoading(true)
     try {
       await api.post('/profile', data)
       await fetchProfile()

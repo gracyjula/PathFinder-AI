@@ -17,6 +17,14 @@ def _parse_json_field(v: Any) -> list | dict:
     return v or []
 
 
+def _orm_to_dict(obj) -> dict:
+    """
+    Convert an ORM object to a plain dict WITHOUT mutating the ORM object.
+    This prevents SQLAlchemy from tracking list values as dirty columns.
+    """
+    return {c.key: getattr(obj, c.key) for c in obj.__class__.__table__.columns}
+
+
 # ─── Learner Profile ──────────────────────────────────────────────────────────
 
 class ProfileCreate(BaseModel):
@@ -69,23 +77,39 @@ class ProfileOut(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def parse_json_strings(cls, values):
-        """Convert JSON string fields from SQLite to Python lists/dicts."""
-        if hasattr(values, "__dict__"):
-            # ORM object
-            obj = values
+        """
+        Convert JSON string fields from SQLite to Python lists/dicts.
+        Uses a dict copy to avoid mutating the ORM object (which would
+        cause SQLAlchemy to track list values as dirty and fail on UPDATE).
+        """
+        if hasattr(values, "__table__"):
+            # ORM object — build a plain dict without mutating it
+            data = _orm_to_dict(values)
             for field in ["current_skills", "completed_courses", "interests", "preferred_languages"]:
-                raw = getattr(obj, field, None)
+                raw = data.get(field)
                 if isinstance(raw, str):
                     try:
-                        setattr(obj, field, json.loads(raw))
+                        data[field] = json.loads(raw)
                     except Exception:
-                        setattr(obj, field, [])
-            raw_gap = getattr(obj, "skill_gap_report", None)
+                        data[field] = []
+                elif not isinstance(raw, list):
+                    data[field] = []
+            raw_gap = data.get("skill_gap_report")
             if isinstance(raw_gap, str):
                 try:
-                    setattr(obj, "skill_gap_report", json.loads(raw_gap))
+                    data["skill_gap_report"] = json.loads(raw_gap)
                 except Exception:
-                    setattr(obj, "skill_gap_report", None)
+                    data["skill_gap_report"] = None
+            return data
+        # Already a dict (e.g. from model_validate)
+        if isinstance(values, dict):
+            for field in ["current_skills", "completed_courses", "interests", "preferred_languages"]:
+                raw = values.get(field)
+                if isinstance(raw, str):
+                    try:
+                        values[field] = json.loads(raw)
+                    except Exception:
+                        values[field] = []
         return values
 
 
@@ -110,15 +134,31 @@ class MilestoneOut(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def parse_json_strings(cls, values):
-        if hasattr(values, "__dict__"):
-            obj = values
+        """
+        Convert JSON string fields for Milestone.
+        Builds a plain dict WITHOUT mutating the ORM object to prevent
+        SQLAlchemy from trying to UPDATE columns with Python list values.
+        """
+        if hasattr(values, "__table__"):
+            data = _orm_to_dict(values)
             for field in ["topics", "resources", "projects", "outcomes"]:
-                raw = getattr(obj, field, None)
+                raw = data.get(field)
                 if isinstance(raw, str):
                     try:
-                        setattr(obj, field, json.loads(raw))
+                        data[field] = json.loads(raw)
                     except Exception:
-                        setattr(obj, field, [])
+                        data[field] = []
+                elif not isinstance(raw, list):
+                    data[field] = []
+            return data
+        if isinstance(values, dict):
+            for field in ["topics", "resources", "projects", "outcomes"]:
+                raw = values.get(field)
+                if isinstance(raw, str):
+                    try:
+                        values[field] = json.loads(raw)
+                    except Exception:
+                        values[field] = []
         return values
 
 
@@ -162,13 +202,24 @@ class ChatMessageOut(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def parse_metadata(cls, values):
-        if hasattr(values, "__dict__"):
-            raw = getattr(values, "metadata_json", None)
+        if hasattr(values, "__table__"):
+            data = _orm_to_dict(values)
+            raw = data.get("metadata_json")
             if isinstance(raw, str):
                 try:
-                    values.__dict__["metadata"] = json.loads(raw)
+                    data["metadata"] = json.loads(raw)
                 except Exception:
-                    values.__dict__["metadata"] = None
+                    data["metadata"] = None
+            else:
+                data["metadata"] = None
+            return data
+        if isinstance(values, dict):
+            raw = values.get("metadata_json")
+            if isinstance(raw, str):
+                try:
+                    values["metadata"] = json.loads(raw)
+                except Exception:
+                    values["metadata"] = None
         return values
 
 

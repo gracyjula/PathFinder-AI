@@ -15,6 +15,7 @@ import QuizPage from '@/pages/QuizPage'
 import InterviewPage from '@/pages/InterviewPage'
 import WhatIfPage from '@/pages/WhatIfPage'
 import SkillGapPage from '@/pages/SkillGapPage'
+import { Brain } from 'lucide-react'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -28,16 +29,39 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/** Full-page spinner shown while the initial session restore is in progress */
+function AppLoadingScreen() {
+  return (
+    <div
+      className="fixed inset-0 flex flex-col items-center justify-center gap-4 z-50"
+      style={{ background: 'var(--bg-base)' }}
+    >
+      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
+        <Brain className="w-7 h-7 text-white" />
+      </div>
+      <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+      <p className="text-sm text-gray-500">Loading your learning profile…</p>
+    </div>
+  )
+}
+
 export default function App() {
-  const { isAuthenticated, fetchMe } = useAuthStore()
+  const { isAuthenticated, isProfileLoading, fetchMe } = useAuthStore()
 
   useEffect(() => {
-    // Restore session on app load
+    // Restore session on app load if a token is stored
     const token = localStorage.getItem('access_token')
     if (token && !isAuthenticated) {
       fetchMe().catch(() => {})
     }
   }, [])
+
+  // While we're restoring the session (token exists but profile not yet loaded),
+  // show a loading screen so protected pages don't flash with null profile.
+  const token = localStorage.getItem('access_token')
+  if (token && isAuthenticated && isProfileLoading) {
+    return <AppLoadingScreen />
+  }
 
   return (
     <BrowserRouter>

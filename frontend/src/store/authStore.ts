@@ -8,6 +8,10 @@ interface AuthState {
   profile: LearnerProfile | null
   isAuthenticated: boolean
   isLoading: boolean
+  /** True while the profile is being fetched from the API.
+   *  Initialised to true when a token exists in localStorage so that
+   *  components never flash a "no profile" state before the first fetch. */
+  isProfileLoading: boolean
 
   login: (email: string, password: string) => Promise<void>
   register: (data: { email: string; username: string; password: string; full_name?: string }) => Promise<void>
@@ -24,6 +28,11 @@ export const useAuthStore = create<AuthState>()(
       profile: null,
       isAuthenticated: false,
       isLoading: false,
+      // Start as true if there is already a token — the app will call fetchMe()
+      // immediately and we don't want components to flash "no profile" first.
+      isProfileLoading: typeof localStorage !== 'undefined'
+        ? !!localStorage.getItem('access_token')
+        : false,
 
       login: async (email, password) => {
         set({ isLoading: true })
@@ -51,23 +60,38 @@ export const useAuthStore = create<AuthState>()(
       logout: () => {
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
-        set({ user: null, profile: null, isAuthenticated: false })
+        set({ user: null, profile: null, isAuthenticated: false, isProfileLoading: false })
       },
 
       fetchMe: async () => {
-        const { data } = await api.get<User>('/auth/me')
-        set({ user: data, isAuthenticated: true })
-        // Try to fetch profile
+        set({ isProfileLoading: true })
         try {
-          await get().fetchProfile()
+          const { data } = await api.get<User>('/auth/me')
+          set({ user: data, isAuthenticated: true })
+          // Fetch profile — keep isProfileLoading=true until this resolves
+          try {
+            await get().fetchProfile()
+          } catch {
+            // New user who hasn't completed onboarding yet — profile doesn't exist
+            set({ isProfileLoading: false })
+          }
         } catch {
-          // Profile might not exist yet
+          // Token was invalid — clear everything
+          localStorage.removeItem('access_token')
+          localStorage.removeItem('refresh_token')
+          set({ isAuthenticated: false, isProfileLoading: false })
         }
       },
 
       fetchProfile: async () => {
-        const { data } = await api.get<LearnerProfile>('/profile')
-        set({ profile: data })
+        set({ isProfileLoading: true })
+        try {
+          const { data } = await api.get<LearnerProfile>('/profile')
+          set({ profile: data, isProfileLoading: false })
+        } catch {
+          set({ isProfileLoading: false })
+          throw new Error('Profile not found')
+        }
       },
 
       setProfile: (profile) => set({ profile }),
@@ -77,6 +101,8 @@ export const useAuthStore = create<AuthState>()(
       partialize: (state) => ({
         user: state.user,
         isAuthenticated: state.isAuthenticated,
+        // profile is intentionally NOT persisted — always re-fetched on load
+        // so it's always fresh. isProfileLoading is derived from token presence.
       }),
     },
   ),

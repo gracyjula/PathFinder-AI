@@ -4,10 +4,11 @@
  *   Required skills → current mastery → gap → status → priority order
  * Every number comes from the DB mastery table, not the LLM.
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Target, Loader2, RefreshCw, Info, ChevronRight, AlertTriangle, CheckCircle2, Lightbulb, GitBranch } from 'lucide-react'
+import { Target, Loader2, RefreshCw, Info, ChevronRight, AlertTriangle, Lightbulb, GitBranch, ArrowRight } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -19,17 +20,38 @@ const STATUS_CONFIG = {
   gap:        { label: 'Gap',         bar: 'bg-rose-500',    badge: 'badge-gap',        text: 'text-rose-400',    icon: '🔴' },
 }
 
+function SkeletonBar() {
+  return (
+    <div className="animate-pulse space-y-2">
+      <div className="flex justify-between">
+        <div className="h-4 bg-white/10 rounded w-32" />
+        <div className="h-4 bg-white/10 rounded w-10" />
+      </div>
+      <div className="h-2 bg-white/10 rounded-full w-full" />
+    </div>
+  )
+}
+
 export default function SkillGapPage() {
-  const { profile } = useAuthStore()
+  const { profile, isProfileLoading } = useAuthStore()
   const qc = useQueryClient()
   const [explainSkill, setExplainSkill] = useState<string | null>(null)
   const [prereqOpen, setPrereqOpen] = useState<string | null>(null)
 
+  // Sync customRole when profile loads (profile was null on initial render)
+  const [customRole, setCustomRole] = useState('')
+  useEffect(() => {
+    if (profile?.career_goal && !customRole) {
+      setCustomRole(profile.career_goal)
+    }
+  }, [profile?.career_goal])
+
   // Deterministic GET — reads from SkillMastery table
-  const { data: gapData, isLoading, error, refetch } = useQuery<SkillGapReport>({
+  // enabled: wait for profile to finish loading, then check career_goal
+  const { data: gapData, isLoading, refetch } = useQuery<SkillGapReport>({
     queryKey: ['skill-gap-current'],
     queryFn: () => api.get('/analytics/skill-gap').then(r => r.data),
-    enabled: !!profile?.career_goal,
+    enabled: !isProfileLoading && !!profile?.career_goal,
     retry: false,
   })
 
@@ -41,7 +63,6 @@ export default function SkillGapPage() {
   })
 
   // Manual re-analysis with custom role
-  const [customRole, setCustomRole] = useState(profile?.career_goal || '')
   const reanalyzeMutation = useMutation({
     mutationFn: () => api.post('/analytics/skill-gap', {
       current_skills: profile?.current_skills ?? [],
@@ -56,6 +77,11 @@ export default function SkillGapPage() {
 
   const readinessPct = gapData?.career_readiness_pct ?? 0
   const readinessColor = readinessPct >= 70 ? 'text-emerald-400' : readinessPct >= 40 ? 'text-amber-400' : 'text-rose-400'
+
+  // Determine what to show
+  const showSkeleton = isProfileLoading || (!!profile?.career_goal && isLoading)
+  const showNoCTA = !isProfileLoading && !profile?.career_goal
+  const showNoGoalCTA = !isProfileLoading && !!profile && !profile.career_goal
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -76,11 +102,13 @@ export default function SkillGapPage() {
             onChange={e => setCustomRole(e.target.value)}
             placeholder="Target role…"
             className="input-field py-2 text-sm w-44"
+            aria-label="Target role for skill gap analysis"
           />
           <button
             onClick={() => reanalyzeMutation.mutate()}
             disabled={reanalyzeMutation.isPending || !customRole}
             className="btn-secondary py-2 flex items-center gap-1.5 text-sm"
+            aria-label="Run skill gap analysis"
           >
             {reanalyzeMutation.isPending
               ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -90,22 +118,54 @@ export default function SkillGapPage() {
         </div>
       </div>
 
-      {/* No profile state */}
-      {!profile?.career_goal && (
+      {/* Skeleton loading state */}
+      {showSkeleton && (
+        <div className="glass-card p-6 space-y-4">
+          <div className="animate-pulse h-6 bg-white/10 rounded w-48 mb-4" />
+          {[...Array(5)].map((_, i) => <SkeletonBar key={i} />)}
+        </div>
+      )}
+
+      {/* No profile at all — complete onboarding first */}
+      {!isProfileLoading && !profile && (
         <div className="glass-card p-10 text-center">
-          <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto mb-3" />
-          <p className="text-white font-semibold mb-1">No career goal set</p>
-          <p className="text-gray-400 text-sm">Complete your profile with a career goal to see your skill gap analysis.</p>
+          <Target className="w-12 h-12 text-rose-400/50 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-white mb-2">Complete onboarding first</h3>
+          <p className="text-gray-400 text-sm mb-6">
+            Set up your profile to get a personalized skill gap analysis.
+          </p>
+          <Link to="/onboarding" className="btn-primary inline-flex items-center gap-2">
+            Start Onboarding <ArrowRight className="w-4 h-4" />
+          </Link>
         </div>
       )}
 
-      {isLoading && (
-        <div className="glass-card p-12 flex items-center justify-center">
-          <Loader2 className="w-7 h-7 animate-spin text-indigo-400" />
+      {/* Profile exists but no career goal */}
+      {showNoGoalCTA && (
+        <div className="glass-card p-10 text-center">
+          <Target className="w-12 h-12 text-rose-400/50 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-white mb-2">Set your career goal to see your skill gap</h3>
+          <p className="text-gray-400 text-sm mb-6">
+            We'll analyze exactly which skills you need and how far you are from each one.
+          </p>
+          <div className="flex gap-3 justify-center flex-wrap">
+            <Link to="/dashboard/profile" className="btn-primary inline-flex items-center gap-2">
+              Set Career Goal <ArrowRight className="w-4 h-4" />
+            </Link>
+            <button
+              onClick={() => reanalyzeMutation.mutate()}
+              disabled={!customRole || reanalyzeMutation.isPending}
+              className="btn-secondary inline-flex items-center gap-2"
+            >
+              {reanalyzeMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Target className="w-4 h-4" />}
+              Analyze Custom Role
+            </button>
+          </div>
         </div>
       )}
 
-      {gapData && (
+      {/* Main gap data */}
+      {gapData && !showSkeleton && (
         <>
           {/* Career Readiness Summary */}
           <div className="glass-card p-6">
@@ -168,6 +228,7 @@ export default function SkillGapPage() {
                   <button
                     key={skill}
                     onClick={() => setExplainSkill(explainSkill === skill ? null : skill)}
+                    aria-label={`Why learn ${skill}? (priority #${i + 1})`}
                     className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border transition-all"
                     style={{
                       background: explainSkill === skill ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.04)',
@@ -244,6 +305,8 @@ export default function SkillGapPage() {
                         )}
                         <button
                           onClick={() => setExplainSkill(item.skill === explainSkill ? null : item.skill)}
+                          aria-label={`Explain why ${item.skill} is recommended`}
+                          title={`Why ${item.skill}?`}
                           className="text-gray-600 hover:text-indigo-400 transition-colors"
                         >
                           <Info className="w-3.5 h-3.5" />
@@ -266,6 +329,7 @@ export default function SkillGapPage() {
                     {item.prerequisites.length > 0 && (
                       <button
                         onClick={() => setPrereqOpen(prereqOpen === item.skill ? null : item.skill)}
+                        aria-label={`Show prerequisites for ${item.skill}`}
                         className="mt-1 text-xs text-gray-600 hover:text-gray-400 flex items-center gap-1"
                       >
                         <GitBranch className="w-3 h-3" />
@@ -281,7 +345,7 @@ export default function SkillGapPage() {
           {/* Summary lists */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              { title: '✅ Strong Skills', skills: gapData.strong_skills, cls: 'badge-strong', empty: 'Keep taking assessments to build strength' },
+              { title: '✅ Strong Skills', skills: gapData.strong_skills, cls: 'badge-strong', empty: 'Take quizzes to build strong skills' },
               { title: '🔶 Developing', skills: gapData.developing_skills, cls: 'badge-developing', empty: 'Take quizzes to push these to Strong' },
               { title: '🔴 Skill Gaps', skills: gapData.gap_skills, cls: 'badge-gap', empty: 'No critical gaps — great progress!' },
             ].map(section => (

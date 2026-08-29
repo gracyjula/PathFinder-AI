@@ -23,7 +23,7 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default function AnalyticsPage() {
-  const { profile } = useAuthStore()
+  const { profile, isProfileLoading } = useAuthStore()
   const qc = useQueryClient()
   const [gapRole, setGapRole] = useState(profile?.career_goal || '')
   const [explainSkill, setExplainSkill] = useState<string | null>(null)
@@ -32,7 +32,8 @@ export default function AnalyticsPage() {
   const { data: gapData, isLoading: gapLoading, refetch: refetchGap } = useQuery<SkillGapReport>({
     queryKey: ['skill-gap-current'],
     queryFn: () => api.get('/analytics/skill-gap').then(r => r.data),
-    enabled: !!profile?.career_goal,
+    // Wait for profile to load before checking career_goal
+    enabled: !isProfileLoading && !!profile?.career_goal,
     retry: false,
   })
 

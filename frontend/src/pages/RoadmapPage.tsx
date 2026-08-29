@@ -38,13 +38,39 @@ export default function RoadmapPage() {
   const completeMutation = useMutation({
     mutationFn: ({ roadmapId, milestoneId }: { roadmapId: string; milestoneId: string }) =>
       api.patch(`/roadmap/${roadmapId}/milestone/${milestoneId}/complete`),
+    // Optimistic update: immediately mark the milestone complete in the cache
+    onMutate: async ({ roadmapId, milestoneId }) => {
+      await qc.cancelQueries({ queryKey: ['roadmaps'] })
+      const previous = qc.getQueryData<Roadmap[]>(['roadmaps'])
+      qc.setQueryData<Roadmap[]>(['roadmaps'], (old) =>
+        old?.map(r =>
+          r.id === roadmapId
+            ? {
+                ...r,
+                milestones: r.milestones.map(m =>
+                  m.id === milestoneId ? { ...m, is_completed: true } : m
+                ),
+                completion_percentage: Math.round(
+                  ((r.milestones.filter(m => m.is_completed || m.id === milestoneId).length) /
+                    r.milestones.length) * 100
+                ),
+              }
+            : r
+        )
+      )
+      return { previous }
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['roadmaps'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['next-best-action'] })
       toast.success('Milestone completed! 🎉')
     },
-    onError: () => toast.error('Failed to complete milestone'),
+    onError: (err, _vars, ctx) => {
+      // Revert optimistic update on failure
+      if (ctx?.previous) qc.setQueryData(['roadmaps'], ctx.previous)
+      toast.error('Failed to complete milestone — please try again')
+    },
   })
 
   const generateMutation = useMutation({
@@ -53,7 +79,18 @@ export default function RoadmapPage() {
       qc.invalidateQueries({ queryKey: ['roadmaps'] })
       toast.success('Roadmap generated!')
     },
-    onError: () => toast.error('Failed to generate roadmap'),
+    onError: (err: any) => {
+      const detail = err?.response?.data?.detail
+      if (detail) {
+        toast.error(`Roadmap generation failed: ${detail}`)
+      } else if (err?.response?.status === 401) {
+        toast.error('Session expired. Please log in again.')
+      } else if (err?.response?.status >= 500) {
+        toast.error('Server error generating roadmap. The fallback roadmap will be used — try again.')
+      } else {
+        toast.error('Failed to generate roadmap. Please try again.')
+      }
+    },
   })
 
   const adaptMutation = useMutation({
@@ -132,6 +169,7 @@ export default function RoadmapPage() {
               disabled={adaptMutation.isPending}
               className="btn-secondary flex items-center gap-2 py-2.5"
               title="Re-analyze your roadmap based on current skill mastery"
+              aria-label="Adapt roadmap based on current skill mastery"
             >
               {adaptMutation.isPending
                 ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -252,6 +290,7 @@ export default function RoadmapPage() {
                           if (canComplete) completeMutation.mutate({ roadmapId: activeRoadmap.id, milestoneId: milestone.id })
                         }}
                         disabled={!canComplete}
+                        aria-label={milestone.is_completed ? `${milestone.title} — completed` : canComplete ? `Mark "${milestone.title}" as complete` : `${milestone.title} — locked`}
                         className="mt-0.5 flex-shrink-0"
                       >
                         {milestone.is_completed

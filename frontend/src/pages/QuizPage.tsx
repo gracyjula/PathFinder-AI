@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Brain, CheckCircle2, XCircle, Loader2, RotateCcw, TrendingUp, TrendingDown, Minus } from 'lucide-react'
@@ -56,6 +56,13 @@ export default function QuizPage() {
   const MasteryIcon = masteryDelta > 0 ? TrendingUp : masteryDelta < 0 ? TrendingDown : Minus
   const masteryColor = masteryDelta > 0 ? 'text-green-400' : masteryDelta < 0 ? 'text-red-400' : 'text-gray-400'
 
+  // Auto-generate quiz when navigated from Next Best Action with a prefilled topic
+  useEffect(() => {
+    if (prefill && topic === prefill && !quiz && !generateMutation.isPending) {
+      generateMutation.mutate()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
@@ -107,14 +114,31 @@ export default function QuizPage() {
       ) : (
         <div className="space-y-4">
           {/* Quiz header */}
-          <div className="glass-card p-4 flex items-center justify-between">
-            <div>
-              <p className="font-semibold text-white">{quiz.topic} Quiz</p>
-              <p className="text-sm text-gray-400 capitalize">{quiz.difficulty} • {quiz.questions?.length} questions</p>
+          <div className="glass-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="font-semibold text-white">{quiz.topic} Quiz</p>
+                <p className="text-sm text-gray-400 capitalize">{quiz.difficulty} • {quiz.questions?.length} questions</p>
+              </div>
+              <button onClick={() => setQuiz(null)} className="btn-secondary flex items-center gap-1.5 text-sm py-2" aria-label="Start a new quiz">
+                <RotateCcw className="w-3.5 h-3.5" /> New Quiz
+              </button>
             </div>
-            <button onClick={() => setQuiz(null)} className="btn-secondary flex items-center gap-1.5 text-sm py-2">
-              <RotateCcw className="w-3.5 h-3.5" /> New Quiz
-            </button>
+            {/* Progress bar showing answered count */}
+            {!submitted && (
+              <div>
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>{Object.keys(answers).length} of {quiz.questions?.length} answered</span>
+                  <span>{Math.round((Object.keys(answers).length / (quiz.questions?.length || 1)) * 100)}%</span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-primary-500 to-accent-500 rounded-full transition-all duration-300"
+                    style={{ width: `${(Object.keys(answers).length / (quiz.questions?.length || 1)) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Result + mastery update banner */}

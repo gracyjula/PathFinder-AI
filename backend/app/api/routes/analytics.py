@@ -279,16 +279,32 @@ async def get_career_readiness(
         "experience_level": profile.experience_level,
     }
 
-    result = await calculate_career_readiness(profile_dict, progress_data)
+    try:
+        result = await calculate_career_readiness(profile_dict, progress_data)
+    except Exception:
+        # Double-fallback: deterministic result if AI service is entirely unavailable
+        score = min(100.0, (progress_data["milestones_completed"] / max(1, progress_data["total_milestones"])) * 100)
+        result = {
+            "score": round(score, 1),
+            "breakdown": {
+                "skills": round(score, 1),
+                "projects": 0,
+                "certifications": 0,
+                "assessments": progress_data["quiz_avg_score"],
+                "consistency": 50,
+            },
+            "weak_areas": [],
+            "strong_areas": [],
+            "suggestions": ["Keep completing milestones to improve your career readiness score"],
+            "interview_ready": score >= 80,
+            "estimated_months_to_ready": max(1, int((100 - score) / 10)),
+        }
 
     # Update score in profile
     profile.career_readiness_score = result.get("score", 0)
     await db.commit()
 
     return result
-
-
-# ─── Dashboard Stats ──────────────────────────────────────────────────────────
 
 @router.get("/dashboard")
 async def get_dashboard_stats(
@@ -509,7 +525,29 @@ async def get_weekly_plan(
         "current_skills": json.loads(profile.current_skills) if isinstance(profile.current_skills, str) else (profile.current_skills or []),
     }
 
-    return await generate_weekly_plan(profile_dict, milestone_dict)
+    try:
+        return await generate_weekly_plan(profile_dict, milestone_dict)
+    except Exception:
+        # Deterministic fallback when AI service is entirely unavailable
+        hours = profile.weekly_hours or 10
+        minutes_per_day = max(30, (hours * 60) // 5)
+        focus = [milestone_dict["title"]] if milestone_dict else [profile.career_goal or "Core topics"]
+        return {
+            "week_number": 1,
+            "goal": f"Progress towards {profile.career_goal or 'your goal'}",
+            "total_hours": hours,
+            "focus_topics": focus,
+            "daily_plans": [
+                {
+                    "day": day,
+                    "tasks": [{"title": "Study session", "type": "study", "duration_minutes": minutes_per_day, "resource": "Course material", "description": f"Review {focus[0]}"}],
+                    "total_minutes": minutes_per_day,
+                }
+                for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+            ],
+            "revision_slots": ["Saturday: Review week's topics", "Sunday: Rest or practice project"],
+            "assessment": "End-of-week quiz on covered topics",
+        }
 
 
 # ─── Resume Analysis ──────────────────────────────────────────────────────────

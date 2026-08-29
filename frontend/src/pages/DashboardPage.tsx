@@ -12,12 +12,15 @@ import { useAuthStore } from '@/store/authStore'
 import type { DashboardStats, NextBestAction, SkillGapReport } from '@/types'
 
 export default function DashboardPage() {
-  const { user, profile } = useAuthStore()
+  const { user, profile, fetchProfile } = useAuthStore()
   const qc = useQueryClient()
 
   const demoSeedMutation = useMutation({
     mutationFn: () => api.post('/analytics/demo-seed'),
-    onSuccess: () => {
+    onSuccess: async () => {
+      // Re-fetch profile so authStore.profile reflects the new career_goal,
+      // which unblocks enabled: !!profile?.career_goal queries in other pages.
+      await fetchProfile()
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['mastery'] })
       qc.invalidateQueries({ queryKey: ['skill-gap-current'] })

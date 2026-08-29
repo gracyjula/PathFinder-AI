@@ -32,6 +32,10 @@ export default function ProfilePage() {
     mutationFn: () => api.patch('/profile', formData),
     onSuccess: (res) => {
       setProfile(res.data)
+      // Invalidate dependent queries so skill gap, dashboard, and analytics refresh
+      qc.invalidateQueries({ queryKey: ['skill-gap-current'] })
+      qc.invalidateQueries({ queryKey: ['next-best-action'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
       toast.success('Profile updated!')
     },
     onError: () => toast.error('Update failed'),
