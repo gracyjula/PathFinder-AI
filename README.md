@@ -2,7 +2,7 @@
 
 > **An adaptive AI learning-path engine that understands where a learner is, where they want to go, identifies the gap between the two, determines what should be learned next, explains why, and continuously replans the journey based on evidence of learning.**
 
-**PathFinder Round 2 Submission** — BVRIT HCL Hackathon 2026
+**PathFinder Ai** — BVRITH HCL Hackathon 2026
 
 ---
 
@@ -307,6 +307,6 @@ DevOps Engineer · Crack GATE CSE
 
 ## Built For
 
-BVRIT PathFinder Round 2 — 2026  
-Team: gracyjula  
+HCL Hackthon Round 2 Submission
+Team: NeuraLearn
 Repository: https://github.com/gracyjula/PathFinder-AI
