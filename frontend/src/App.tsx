@@ -15,22 +15,11 @@ import QuizPage from '@/pages/QuizPage'
 import InterviewPage from '@/pages/InterviewPage'
 import WhatIfPage from '@/pages/WhatIfPage'
 import SkillGapPage from '@/pages/SkillGapPage'
-import { Brain } from 'lucide-react'
+import { Brain, Loader2 } from 'lucide-react'
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuthStore()
-  if (!isAuthenticated) return <Navigate to="/login" replace />
-  return <>{children}</>
-}
+// ─── Loading overlay (always INSIDE BrowserRouter) ────────────────────────────
 
-function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuthStore()
-  if (isAuthenticated) return <Navigate to="/dashboard" replace />
-  return <>{children}</>
-}
-
-/** Full-page spinner shown while the initial session restore is in progress */
-function AppLoadingScreen() {
+function AppLoadingOverlay() {
   return (
     <div
       className="fixed inset-0 flex flex-col items-center justify-center gap-4 z-50"
@@ -39,47 +28,82 @@ function AppLoadingScreen() {
       <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
         <Brain className="w-7 h-7 text-white" />
       </div>
-      <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+      <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
       <p className="text-sm text-gray-500">Loading your learning profile…</p>
     </div>
   )
 }
 
-export default function App() {
-  const { isAuthenticated, isProfileLoading, fetchMe } = useAuthStore()
+// ─── Route guards ─────────────────────────────────────────────────────────────
+
+/**
+ * ProtectedRoute: requires authentication.
+ * If not authenticated and no auth is in flight, redirect to /login.
+ * If auth is still loading, render nothing (AppLoadingOverlay is shown by AppRoutes).
+ */
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading, isProfileLoading } = useAuthStore()
+
+  // Still resolving auth — don't redirect prematurely
+  if (isLoading || isProfileLoading) return null
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
+
+/**
+ * PublicRoute: only accessible to unauthenticated users.
+ *
+ * KEY FIX: Do NOT redirect while auth is in flight (isLoading or isProfileLoading).
+ * Previously, PublicRoute redirected as soon as isAuthenticated turned true, which
+ * happened mid-way through register()/login() before the flow was complete.
+ * This caused RegisterPage to unmount before navigate('/onboarding') could run.
+ *
+ * When auth is fully settled:
+ *   - authenticated + no profile → /onboarding (new user path)
+ *   - authenticated + has profile → /dashboard  (returning user path)
+ */
+function PublicRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading, isProfileLoading, profile } = useAuthStore()
+
+  // Auth operation still in flight — render nothing, loading overlay is shown
+  if (isLoading || isProfileLoading) return null
+
+  if (isAuthenticated) {
+    // New user: no profile yet → send to onboarding
+    // Returning user: has profile → send to dashboard
+    return <Navigate to={profile ? '/dashboard' : '/onboarding'} replace />
+  }
+
+  return <>{children}</>
+}
+
+// ─── Inner routes (needs to be a separate component so useEffect is inside Router) ─
+
+function AppRoutes() {
+  const { isLoading, isProfileLoading, fetchMe } = useAuthStore()
 
   useEffect(() => {
-    // Always re-validate the token on every page load / refresh.
-    //
-    // BUG FIXED: previously this was guarded by `!isAuthenticated`, which meant
-    // that after a page refresh where Zustand had persisted isAuthenticated=true,
-    // fetchMe() was never called — leaving isProfileLoading=true forever and
-    // the entire app stuck on the loading screen.
-    //
-    // Now: if a token exists we always call fetchMe(), which:
-    //   1. verifies the token against the backend (/auth/me)
-    //   2. fetches the latest profile
-    //   3. sets isProfileLoading=false when done (success or failure)
+    // Always re-validate the stored token on every page load/refresh.
+    // No isAuthenticated guard here — that value is stale from Zustand persist.
     const token = localStorage.getItem('access_token')
     if (token) {
       fetchMe().catch(() => {})
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Show the loading screen only while we're actively restoring the session.
-  // isProfileLoading is set to true at the start of fetchMe() and back to false
-  // when it resolves — so this spinner is always time-bounded.
   const token = localStorage.getItem('access_token')
-  if (token && isProfileLoading) {
-    return <AppLoadingScreen />
-  }
+  const isRestoring = token && (isLoading || isProfileLoading)
 
   return (
-    <BrowserRouter>
+    <>
+      {/* Loading overlay sits INSIDE the router — BrowserRouter stays mounted */}
+      {isRestoring && <AppLoadingOverlay />}
+
       <Routes>
         {/* Public */}
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+        <Route path="/"         element={<LandingPage />} />
+        <Route path="/login"    element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
 
         {/* Protected */}
@@ -88,20 +112,35 @@ export default function App() {
           path="/dashboard"
           element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}
         >
-          <Route index element={<DashboardPage />} />
-          <Route path="chat" element={<ChatPage />} />
-          <Route path="roadmap" element={<RoadmapPage />} />
+          <Route index          element={<DashboardPage />} />
+          <Route path="chat"      element={<ChatPage />} />
+          <Route path="roadmap"   element={<RoadmapPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
-          <Route path="profile" element={<ProfilePage />} />
-          <Route path="quiz" element={<QuizPage />} />
+          <Route path="profile"   element={<ProfilePage />} />
+          <Route path="quiz"      element={<QuizPage />} />
           <Route path="interview" element={<InterviewPage />} />
-          <Route path="whatif" element={<WhatIfPage />} />
-          <Route path="skills" element={<SkillGapPage />} />
+          <Route path="whatif"    element={<WhatIfPage />} />
+          <Route path="skills"    element={<SkillGapPage />} />
         </Route>
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+    </>
+  )
+}
+
+// ─── Root ─────────────────────────────────────────────────────────────────────
+
+/**
+ * BrowserRouter is rendered UNCONDITIONALLY here — it must never be
+ * conditionally unmounted. Doing so destroys the router history stack
+ * and causes blank screens / broken navigate() calls.
+ */
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
     </BrowserRouter>
   )
 }

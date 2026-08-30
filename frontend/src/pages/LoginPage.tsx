@@ -1,39 +1,55 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Brain, Mail, Lock, Eye, EyeOff } from 'lucide-react'
+import { Brain, Mail, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
 
 const schema = z.object({
-  email: z.string().email('Invalid email'),
-  password: z.string().min(6, 'Password required'),
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(1, 'Password is required'),
 })
 type FormData = z.infer<typeof schema>
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
-  const { login, isLoading } = useAuthStore()
-  const navigate = useNavigate()
+  const [serverError, setServerError] = useState<string | null>(null)
 
-  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
-    resolver: zodResolver(schema),
-  })
+  // Navigation is handled by PublicRoute in App.tsx once isAuthenticated=true:
+  //   has profile  → /dashboard
+  //   no profile   → /onboarding
+  const { login, isLoading } = useAuthStore()
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<FormData>({ resolver: zodResolver(schema) })
 
   const onSubmit = async (data: FormData) => {
+    setServerError(null)
     try {
       await login(data.email, data.password)
       toast.success('Welcome back!')
-      navigate('/dashboard')
+      // No navigate() call — redirect handled by PublicRoute
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Login failed')
+      const detail = err?.response?.data?.detail
+      const msg =
+        detail === 'Invalid credentials'
+          ? 'Incorrect email or password.'
+          : detail || 'Login failed. Please try again.'
+      setServerError(msg)
+      toast.error(msg)
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ background: 'var(--bg-base)' }}>
+    <div
+      className="min-h-screen flex items-center justify-center px-4"
+      style={{ background: 'var(--bg-base)' }}
+    >
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary-500/10 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-accent-500/10 rounded-full blur-3xl" />
@@ -50,9 +66,20 @@ export default function LoginPage() {
           </div>
 
           <h1 className="text-2xl font-bold text-center mb-2">Welcome back</h1>
-          <p className="text-gray-400 text-center text-sm mb-8">Sign in to continue your learning journey</p>
+          <p className="text-gray-400 text-center text-sm mb-8">
+            Sign in to continue your learning journey
+          </p>
+
+          {/* Server-level error banner */}
+          {serverError && (
+            <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-red-300">{serverError}</p>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+            {/* Email */}
             <div>
               <label className="text-sm text-gray-400 mb-1.5 block">Email</label>
               <div className="relative">
@@ -62,11 +89,15 @@ export default function LoginPage() {
                   type="email"
                   placeholder="you@example.com"
                   className="input-field pl-10"
+                  autoComplete="email"
                 />
               </div>
-              {errors.email && <p className="text-red-400 text-xs mt-1">{errors.email.message}</p>}
+              {errors.email && (
+                <p className="text-red-400 text-xs mt-1">{errors.email.message}</p>
+              )}
             </div>
 
+            {/* Password */}
             <div>
               <label className="text-sm text-gray-400 mb-1.5 block">Password</label>
               <div className="relative">
@@ -76,20 +107,35 @@ export default function LoginPage() {
                   type={showPassword ? 'text' : 'password'}
                   placeholder="••••••••"
                   className="input-field pl-10 pr-10"
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
+                  onClick={() => setShowPassword(p => !p)}
                   className="absolute right-3 top-3.5 text-gray-500 hover:text-gray-300"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              {errors.password && <p className="text-red-400 text-xs mt-1">{errors.password.message}</p>}
+              {errors.password && (
+                <p className="text-red-400 text-xs mt-1">{errors.password.message}</p>
+              )}
             </div>
 
-            <button type="submit" disabled={isLoading} className="btn-primary w-full">
-              {isLoading ? 'Signing in...' : 'Sign In'}
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="btn-primary w-full flex items-center justify-center gap-2"
+            >
+              {isLoading ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Signing in…
+                </>
+              ) : (
+                'Sign In'
+              )}
             </button>
           </form>
 
