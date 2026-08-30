@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Zap, TrendingUp, TrendingDown, Minus, Loader2, RefreshCw, AlertTriangle } from 'lucide-react'
 import { motion } from 'framer-motion'
 import {
-  RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, Tooltip, Cell, ResponsiveContainer, LabelList,
 } from 'recharts'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -41,19 +41,18 @@ export default function WhatIfPage() {
 
   const canRun = !!targetRole
 
-  // Radar comparison data
-  const radarData = data
-    ? data.current.priority_skills.slice(0, 6).map(skill => ({
-        skill,
-        current: 0,   // we don't have per-skill mastery here, use readiness as proxy
-        simulated: 0,
-      }))
-    : []
-
   const delta = data?.impact.readiness_change ?? 0
   const monthsDelta = data?.impact.months_change ?? 0
   const DeltaIcon = delta > 0 ? TrendingUp : delta < 0 ? TrendingDown : Minus
   const deltaColor = delta > 0 ? 'text-green-400' : delta < 0 ? 'text-red-400' : 'text-gray-400'
+
+  // Bar chart: compare current vs simulated readiness for key metrics
+  const comparisonBarData = data
+    ? [
+        { name: 'Readiness', current: data.current.career_readiness_pct, simulated: data.simulated.career_readiness_pct },
+        { name: 'Hours', current: Math.min(100, data.current.total_available_hours / 10), simulated: Math.min(100, data.simulated.total_available_hours / 10) },
+      ]
+    : []
 
   return (
     <div className="max-w-4xl mx-auto">

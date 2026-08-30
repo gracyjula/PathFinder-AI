@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer,
@@ -27,6 +27,13 @@ export default function AnalyticsPage() {
   const qc = useQueryClient()
   const [gapRole, setGapRole] = useState(profile?.career_goal || '')
   const [explainSkill, setExplainSkill] = useState<string | null>(null)
+
+  // Sync gapRole when profile loads (profile may be null on initial render)
+  useEffect(() => {
+    if (profile?.career_goal && !gapRole) {
+      setGapRole(profile.career_goal)
+    }
+  }, [profile?.career_goal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Deterministic skill gap from mastery data ──────────────────────────────
   const { data: gapData, isLoading: gapLoading, refetch: refetchGap } = useQuery<SkillGapReport>({

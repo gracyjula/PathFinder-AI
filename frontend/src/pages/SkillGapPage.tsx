@@ -80,7 +80,6 @@ export default function SkillGapPage() {
 
   // Determine what to show
   const showSkeleton = isProfileLoading || (!!profile?.career_goal && isLoading)
-  const showNoCTA = !isProfileLoading && !profile?.career_goal
   const showNoGoalCTA = !isProfileLoading && !!profile && !profile.career_goal
 
   return (

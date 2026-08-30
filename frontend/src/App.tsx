@@ -49,17 +49,28 @@ export default function App() {
   const { isAuthenticated, isProfileLoading, fetchMe } = useAuthStore()
 
   useEffect(() => {
-    // Restore session on app load if a token is stored
+    // Always re-validate the token on every page load / refresh.
+    //
+    // BUG FIXED: previously this was guarded by `!isAuthenticated`, which meant
+    // that after a page refresh where Zustand had persisted isAuthenticated=true,
+    // fetchMe() was never called — leaving isProfileLoading=true forever and
+    // the entire app stuck on the loading screen.
+    //
+    // Now: if a token exists we always call fetchMe(), which:
+    //   1. verifies the token against the backend (/auth/me)
+    //   2. fetches the latest profile
+    //   3. sets isProfileLoading=false when done (success or failure)
     const token = localStorage.getItem('access_token')
-    if (token && !isAuthenticated) {
+    if (token) {
       fetchMe().catch(() => {})
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // While we're restoring the session (token exists but profile not yet loaded),
-  // show a loading screen so protected pages don't flash with null profile.
+  // Show the loading screen only while we're actively restoring the session.
+  // isProfileLoading is set to true at the start of fetchMe() and back to false
+  // when it resolves — so this spinner is always time-bounded.
   const token = localStorage.getItem('access_token')
-  if (token && isAuthenticated && isProfileLoading) {
+  if (token && isProfileLoading) {
     return <AppLoadingScreen />
   }
 

@@ -20,13 +20,14 @@ export default function QuizPage() {
 
   const [topic, setTopic] = useState(prefill)
   const [difficulty, setDifficulty] = useState('intermediate')
+  const [numQuestions, setNumQuestions] = useState(5)
   const [quiz, setQuiz] = useState<any>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [submitted, setSubmitted] = useState(false)
   const [result, setResult] = useState<QuizResult | null>(null)
 
   const generateMutation = useMutation({
-    mutationFn: () => api.post('/analytics/quiz/generate', { topic, difficulty, num_questions: 5 }),
+    mutationFn: () => api.post('/analytics/quiz/generate', { topic, difficulty, num_questions: numQuestions }),
     onSuccess: (res) => {
       setQuiz(res.data)
       setAnswers({})
@@ -101,6 +102,26 @@ export default function QuizPage() {
                 {d}
               </button>
             ))}
+          </div>
+          <div className="mb-5">
+            <label className="text-sm text-gray-400 mb-2 block">
+              Number of Questions: <span className="text-white font-semibold">{numQuestions}</span>
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {[3, 5, 8, 10].map(n => (
+                <button
+                  key={n}
+                  onClick={() => setNumQuestions(n)}
+                  className={`py-2 rounded-xl text-sm font-medium border transition-all ${
+                    numQuestions === n
+                      ? 'border-primary-500 bg-primary-500/20 text-primary-300'
+                      : 'border-white/10 bg-white/5 text-gray-400 hover:border-primary-500/30'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
           </div>
           <button
             onClick={() => generateMutation.mutate()}
