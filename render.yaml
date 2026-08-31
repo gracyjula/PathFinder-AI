@@ -1,0 +1,60 @@
+services:
+  - type: web
+    name: neuralearn-backend
+    runtime: python
+    region: oregon      # change to: singapore | frankfurt | ohio | virginia
+    plan: free          # upgrade to starter ($7/mo) for persistent disk & no sleep
+
+    rootDir: backend    # all build/start commands run from the backend/ subdirectory
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: APP_NAME
+        value: NeuraLearn AI
+      - key: APP_VERSION
+        value: "1.0.0"
+      - key: DEBUG
+        value: "false"
+
+      # Render auto-generates a random secret on first deploy
+      - key: SECRET_KEY
+        generateValue: true
+
+      # Render injects these when the PostgreSQL add-on is attached below
+      - key: DATABASE_URL
+        fromDatabase:
+          name: neuralearn-db
+          property: connectionString
+      - key: SYNC_DATABASE_URL
+        fromDatabase:
+          name: neuralearn-db
+          property: connectionString
+
+      # ── REPLACE this with your real Vercel URL after frontend deploy ────────
+      - key: FRONTEND_URL
+        value: https://neuralearn.vercel.app
+
+      # Set these manually in the Render dashboard — DO NOT put real keys here
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "30"
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "10"
+
+databases:
+  - name: neuralearn-db
+    databaseName: neuralearn
+    user: neuralearn
+    plan: free   # Free tier: 1 GB, expires after 90 days — upgrade to starter for persistent

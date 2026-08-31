@@ -13,6 +13,8 @@ build/
 node_modules/
 dist/
 .env.local
+.env
+.env.production
 
 # IDE
 .vscode/
@@ -22,9 +24,10 @@ dist/
 # Docker
 *.log
 
-# Database
+# Database — never commit SQLite files
 *.db
 *.sqlite3
+backend/neuralearn.db
 
 # OS
 .DS_Store

@@ -2,13 +2,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
+# Use the normalised async URL (postgresql+asyncpg:// or sqlite+aiosqlite://)
+_db_url = settings.async_database_url
+
 # SQLite needs check_same_thread=False; PostgreSQL does not need it
-is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+is_sqlite = _db_url.startswith("sqlite")
 
 connect_args = {"check_same_thread": False} if is_sqlite else {}
 
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    _db_url,
     echo=settings.DEBUG,
     connect_args=connect_args,
     # pool settings only apply to non-SQLite

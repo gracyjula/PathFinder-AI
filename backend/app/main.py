@@ -31,20 +31,32 @@ app = FastAPI(
 )
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
-# Allow the Vite dev server (5173), any other common local ports, and whatever
-# FRONTEND_URL is set to in .env (defaults to http://localhost:5173).
+# FRONTEND_URL is set via environment variable in production (e.g. your Vercel URL).
+# Multiple origins can be provided as a comma-separated list in FRONTEND_URL,
+# e.g. FRONTEND_URL=https://neuralearn.vercel.app,https://neuralearn-git-main.vercel.app
 
-_CORS_ORIGINS = list(
-    {
-        settings.FRONTEND_URL,           # from .env  (default: http://localhost:5173)
-        "http://localhost:5173",          # Vite dev server
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",          # CRA / other
-        "http://127.0.0.1:3000",
-        "http://localhost:4173",          # Vite preview
-        "http://127.0.0.1:4173",
-    }
-)
+def _build_cors_origins() -> list[str]:
+    """Build the CORS allow-list from settings + hard-coded dev origins."""
+    origins = set()
+    # Support comma-separated list in FRONTEND_URL
+    for url in settings.FRONTEND_URL.split(","):
+        url = url.strip()
+        if url:
+            origins.add(url)
+    # Always allow local dev origins
+    origins.update(
+        {
+            "http://localhost:5173",   # Vite dev server
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",   # CRA / other
+            "http://127.0.0.1:3000",
+            "http://localhost:4173",   # Vite preview
+            "http://127.0.0.1:4173",
+        }
+    )
+    return list(origins)
+
+_CORS_ORIGINS = _build_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
@@ -71,7 +83,7 @@ app.include_router(admin.router,     prefix=API_PREFIX)
 
 @app.get("/", tags=["Health"], summary="Root health check")
 async def root():
-    """Returns a simple health confirmation. Open http://localhost:5173 for the UI."""
+    """Returns a simple health confirmation."""
     return {"message": "NeuraLearn API is running"}
 
 
@@ -82,8 +94,8 @@ async def health_check():
         "message": "NeuraLearn API is running",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "docs": "http://localhost:8000/api/docs",
-        "frontend": "http://localhost:5173",
+        "docs": "/api/docs",
+        "frontend": settings.FRONTEND_URL,
     }
 
 
@@ -109,8 +121,8 @@ async def not_found_handler(request: Request, exc):
                 "detail": "Not Found",
                 "hint": (
                     f"'{path}' is a React frontend route, not a backend API endpoint. "
-                    "Open the React dev server at http://localhost:5173 instead. "
-                    "API docs are at http://localhost:8000/api/docs"
+                    f"Please open the frontend application. "
+                    "API docs are at /api/docs"
                 ),
             },
         )
