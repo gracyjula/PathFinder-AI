@@ -1,7 +1,11 @@
 /// <reference types="vite/client" />
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+// Use VITE_API_URL if set (e.g. in production).
+// In development, use a relative path so requests go through the Vite proxy
+// (vite.config.ts: /api -> http://localhost:8000). This avoids CORS issues
+// and the Windows localhost IPv4/IPv6 mismatch (localhost vs 127.0.0.1).
+const API_BASE = import.meta.env.VITE_API_URL || '/api/v1'
 
 export const api = axios.create({
   baseURL: API_BASE,

@@ -10,10 +10,13 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,          // bind to 0.0.0.0 — works on both IPv4 and IPv6
     port: 5173,
     proxy: {
+      // All /api/* requests are forwarded to the FastAPI backend.
+      // Using 127.0.0.1 explicitly (not localhost) avoids Windows IPv6 issues.
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },
